@@ -7,7 +7,8 @@ export class Ally {
 		this.health = 100;
 		this.speed = 3.2 + Math.random() * 0.6;
 		this.radius = 0.5;
-		this.shootCooldown = 0.6 + Math.random() * 0.4;
+		this.baseShootCooldown = 0.6 + Math.random() * 0.4;
+		this.shootCooldown = this.baseShootCooldown;
 		this.lastShoot = 0;
 		this.state = 'patrol';
 		this.targetEnemy = null;
@@ -16,6 +17,8 @@ export class Ally {
 		this.mesh = this.createMesh();
 		this.mesh.position.copy(new THREE.Vector3(position.x, 1, position.z));
 		scene.add(this.mesh);
+		this.coverTimer = 0;
+		this.strafeTimer = 0;
 	}
 
 	createMesh() {
@@ -35,7 +38,7 @@ export class Ally {
 	}
 
 	think(context) {
-		const { playerPos, enemies, pickups } = context;
+		const { playerPos, enemies, pickups, grenades = [] } = context;
 		// Regroup jika terlalu jauh dari player
 		const distToPlayer = this.mesh.position.distanceTo(playerPos);
 		if (distToPlayer > 35) {
@@ -59,6 +62,13 @@ export class Ally {
 			this.targetEnemy = nearestEnemy;
 			this.nextThink = 0.6 + Math.random() * 0.4;
 			return;
+		}
+
+		// Evade granat bila dekat
+		for (const g of grenades) {
+			if (!g.alive || !g.mesh) continue;
+			const d = g.mesh.position.distanceTo(this.mesh.position);
+			if (d < 6) { this.state = 'evade'; const away = this.mesh.position.clone().sub(g.mesh.position).setY(0).normalize().multiplyScalar(8); this.waypoint = this.mesh.position.clone().add(away); this.nextThink = 0.4 + Math.random()*0.3; return; }
 		}
 
 		// Engage jika ada musuh dalam jarak 25
@@ -101,10 +111,10 @@ export class Ally {
 	}
 
 	update(dt, context) {
-		const { playerPos, enemies, obstacles, pickups } = context;
+		const { playerPos, enemies, obstacles, pickups, grenades = [] } = context;
 
 		this.nextThink -= dt;
-		if (this.nextThink <= 0) this.think({ playerPos, enemies, pickups });
+		if (this.nextThink <= 0) this.think({ playerPos, enemies, pickups, grenades });
 
 		let shoot = false;
 		let target = null;
@@ -123,9 +133,24 @@ export class Ally {
 				const strafe = right.multiplyScalar(side * this.speed * 0.6 * dt);
 				this.mesh.position.add(strafe);
 			}
+			// cover sederhana: sesekali offset ke sisi obstacle terdekat
+			this.coverTimer -= dt;
+			if (this.coverTimer <= 0) {
+				let nearest = null, ndc = Infinity;
+				for (const o of obstacles){ const d = o.mesh.position.distanceTo(this.mesh.position); if (d < ndc) { ndc = d; nearest = o; } }
+				if (nearest && ndc < 4) {
+					const toObs = nearest.mesh.position.clone().sub(this.mesh.position).setY(0).normalize();
+					const side = new THREE.Vector3(-toObs.z, 0, toObs.x).multiplyScalar(1.2);
+					this.mesh.position.add(side.multiplyScalar(0.5));
+				}
+				this.coverTimer = 0.9 + Math.random()*0.7;
+			}
 			this.mesh.lookAt(new THREE.Vector3(epos.x, this.mesh.position.y, epos.z));
-			// Tembak dengan cooldown
+			// Tembak dengan cooldown adaptif
 			const now = performance.now() / 1000;
+			// adaptasi cooldown & probabilitas berdasarkan jarak dan health
+			const nearFactor = THREE.MathUtils.clamp((25 - dist)/25, 0, 1);
+			this.shootCooldown = Math.max(0.3, this.baseShootCooldown - 0.2*nearFactor);
 			if (now - this.lastShoot > this.shootCooldown) {
 				this.lastShoot = now;
 				shoot = true;
@@ -133,7 +158,7 @@ export class Ally {
 			}
 		} else if (this.state === 'seekAmmo') {
 			this.moveTowards(this.waypoint, dt);
-		} else if (this.state === 'retreat' || this.state === 'regroup' || this.state === 'patrol') {
+		} else if (this.state === 'retreat' || this.state === 'regroup' || this.state === 'patrol' || this.state === 'evade') {
 			this.moveTowards(this.waypoint, dt);
 		}
 

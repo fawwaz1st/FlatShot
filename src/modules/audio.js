@@ -9,6 +9,7 @@ export class AudioFX {
 		this._afterUnlock = [];
 		this._bindUnlock();
 		this.mode = 'synth';
+		this._bgmTarget = 0.12;
 	}
 
 	ensureCtx() {
@@ -44,7 +45,7 @@ export class AudioFX {
 	}
 
 	setMasterVolume(v) { this.ensureCtx(); this.masterGain.gain.value = Math.max(0, Math.min(1, v)); }
-	setMusicVolume(v) { this.ensureCtx(); if (this.bgmGain) this.bgmGain.gain.value = Math.max(0, Math.min(1, v)); }
+	setMusicVolume(v) { this.ensureCtx(); if (this.bgmGain) { this.bgmGain.gain.value = Math.max(0, Math.min(1, v)); } this._bgmTarget = Math.max(0, Math.min(1, v)); }
 	setSfxVolume(v) { this.ensureCtx(); this.sfxGain.gain.value = Math.max(0, Math.min(1, v)); }
 
 	setSoundtrackMode(mode){ this.mode = (mode === 'retro' || mode === 'off') ? mode : 'synth'; }
@@ -65,7 +66,56 @@ export class AudioFX {
 		});
 	}
 
-	shoot() { this.beep({ duration: 0.04, frequency: 280, type: 'square', volume: 0.25, decay: 0.03 }); }
+	// Gunshot berlapis: click + noise burst (bandpass) + low thump
+	shoot() {
+		this._runAfterUnlock(() => {
+			const ctx = this.ctx; this.ensureCtx();
+			const now = ctx.currentTime;
+			const master = ctx.createGain(); master.gain.value = 1.0; master.connect(this.sfxGain);
+			// CLICK awal
+			const click = ctx.createOscillator(); click.type='triangle';
+			const cGain = ctx.createGain(); cGain.gain.setValueAtTime(0.3, now); cGain.gain.exponentialRampToValueAtTime(0.0001, now+0.03);
+			click.frequency.setValueAtTime(420 + (Math.random()*40-20), now);
+			click.connect(cGain).connect(master);
+			click.start(now); click.stop(now+0.035);
+			// NOISE burst (crack) melalui bandpass
+			const noiseBuf = this._getNoiseBuffer();
+			const noise = ctx.createBufferSource(); noise.buffer = noiseBuf; noise.loop = false;
+			const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(1800 + Math.random()*500, now); bp.Q.value = 0.9;
+			const nGain = ctx.createGain(); nGain.gain.setValueAtTime(0.9, now); nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+			noise.connect(bp).connect(nGain).connect(master);
+			noise.start(now); noise.stop(now + 0.14);
+			// LOW THUMP singkat
+			const thump = ctx.createOscillator(); thump.type='sine'; thump.frequency.setValueAtTime(120 + Math.random()*20, now);
+			const tGain = ctx.createGain(); tGain.gain.setValueAtTime(0.001, now); tGain.gain.exponentialRampToValueAtTime(0.6, now + 0.015); tGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+			thump.connect(tGain).connect(master);
+			thump.start(now); thump.stop(now + 0.2);
+			// auto cleanup
+			setTimeout(()=>{ try{ master.disconnect(); }catch(e){} }, 220);
+		});
+	}
+
+	// SFX weapon switch: short whoosh + soft click
+	weaponSwitch(){
+		this._runAfterUnlock(()=>{
+			const ctx = this.ctx; const now = ctx.currentTime;
+			// whoosh via bandpass noise sweep
+			const noise = ctx.createBufferSource(); noise.buffer = this._getNoiseBuffer();
+			const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(300, now); bp.frequency.exponentialRampToValueAtTime(1400, now+0.16);
+			const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(0.4, now+0.03); g.gain.exponentialRampToValueAtTime(0.0001, now+0.22);
+			noise.connect(bp).connect(g).connect(this.sfxGain); noise.start(now); noise.stop(now+0.24);
+			// soft click at end
+			const osc = ctx.createOscillator(); osc.type='square'; osc.frequency.setValueAtTime(320, now+0.16);
+			const cg = ctx.createGain(); cg.gain.setValueAtTime(0.18, now+0.16); cg.gain.exponentialRampToValueAtTime(0.0001, now+0.22);
+			osc.connect(cg).connect(this.sfxGain); osc.start(now+0.16); osc.stop(now+0.23);
+		});
+	}
+
+	headshot(){ this.beep({ duration: 0.05, frequency: 1400, type: 'square', volume: 0.28, decay: 0.04 }); }
+	footstep({ run=false }={}){ this.beep({ duration: 0.02, frequency: run?160:120, type: 'triangle', volume: run?0.18:0.12, decay: 0.02 }); }
+	powerup(){ this.beep({ duration: 0.08, frequency: 900, type: 'sine', volume: 0.22, decay: 0.06 }); }
+	streak(){ this.beep({ duration: 0.06, frequency: 680, type: 'sawtooth', volume: 0.22, decay: 0.05 }); }
+
 	hit() { this.beep({ duration: 0.03, frequency: 900, type: 'sine', volume: 0.18, decay: 0.02 }); }
 	reload() { this.beep({ duration: 0.05, frequency: 220, type: 'triangle', volume: 0.2, decay: 0.03 }); setTimeout(() => this.beep({ duration: 0.05, frequency: 320, type: 'triangle', volume: 0.2, decay: 0.03 }), 160); }
 	click() { this.beep({ duration: 0.02, frequency: 120, type: 'square', volume: 0.14, decay: 0.02 }); }
@@ -159,7 +209,8 @@ export class AudioFX {
 			osc1.start(); osc2.start(); lfo.start();
 			this.bgmNodes = [osc1, osc2, lfo, lfoGain, lp];
 			// fade in
-			this.bgmGain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 1.2);
+			this._bgmTarget = 0.15;
+			this.bgmGain.gain.linearRampToValueAtTime(this._bgmTarget, ctx.currentTime + 1.2);
 		});
 	}
 
@@ -187,8 +238,22 @@ export class AudioFX {
 			osc.connect(lp); lp.connect(this.bgmGain);
 			osc.start(); lfo.start();
 			this.bgmNodes = [osc, lfo, lfoGain, lp];
-			this.bgmGain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 1.0);
+			this._bgmTarget = 0.12;
+			this.bgmGain.gain.linearRampToValueAtTime(this._bgmTarget, ctx.currentTime + 1.0);
 		});
+	}
+
+	// Sidechain ducking sederhana pada BGM
+	duckBgm(amount = 0.5, durationMs = 140){
+		try {
+			if (!this.bgmGain) return;
+			const ctx = this.ctx; const now = ctx.currentTime;
+			const target = Math.max(0, Math.min(1, this._bgmTarget));
+			const dip = Math.max(0, Math.min(1, target * amount));
+			this.bgmGain.gain.cancelScheduledValues(now);
+			this.bgmGain.gain.setValueAtTime(dip, now);
+			this.bgmGain.gain.linearRampToValueAtTime(target, now + durationMs/1000);
+		} catch(_) {}
 	}
 
 	stopBgm(fade = true) {

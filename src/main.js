@@ -10,6 +10,8 @@ const finalScoreEl = document.getElementById('finalScore');
 const transEl = document.getElementById('transition');
 const countdownEl = document.getElementById('countdown');
 const countTextEl = document.getElementById('countText');
+const skillSelectEl = document.getElementById('skillSelect');
+const skillGridEl = document.getElementById('skillGrid');
 
 // helper untuk cek lock status (MDN: Document.pointerLockElement)
 const isPointerLocked = () => !!(document.pointerLockElement || (document.getRootNode && document.getRootNode().pointerLockElement));
@@ -153,18 +155,55 @@ async function startGameFlow(){
 	fade(true, () => {
 		menuEl.classList.add('hidden');
 		hudEl.classList.remove('hidden');
-		crosshairEl.classList.remove('hidden');
+		crosshairEl.classList.add('hidden'); // sembunyikan sampai selesai pilih skill
 		try { game.audio.stopBgm(true); } catch(_) {}
-		// minta pointer lock sebagai bagian dari gesture user
-		tryRequestPointerLock();
 		setTimeout(async ()=>{
+			const picked = await presentSkillSelection();
+			if (picked) { try { game.applySkill(picked.key); game.audio.powerup(); } catch(_) {} }
 			await runCountdown();
+			// minta pointer lock setelah seleksi & countdown
+			tryRequestPointerLock();
 			try { game.audio.startGameBgm(); } catch(_) {}
 			game.start();
+			crosshairEl.classList.remove('hidden');
 			// fallback: jika belum lock, klik kanvas lagi segera (user bisa klik sekali lagi)
 			if (!isPointerLocked()) { game?.renderer?.domElement?.addEventListener('click', tryRequestPointerLock, { once: true }); }
 			fade(false);
 		}, 350);
+	});
+}
+
+function buildCardEl(skill){
+	const div = document.createElement('div');
+	div.className = 'skill-card';
+	div.innerHTML = `<div class="hex"></div><span class="rar r-S">Tier S</span><div class="inner"><h3>${skill.name}</h3><p>${skill.desc}</p></div>`;
+	div.addEventListener('mouseenter', ()=>{ try { game.audio.menuHover(); } catch(_) {} });
+	div.addEventListener('click', ()=>{ try { game.audio.menuClick(); } catch(_) {}; resolvePick(skill); });
+	return div;
+}
+
+const S_SKILLS = [
+	{ key:'overcharge', name:'Overcharge', desc:'+50% damage ke musuh.' },
+	{ key:'aegis', name:'Aegis', desc:'Mendapatkan +50 Shield yang menyerap damage.' },
+	{ key:'adrenal', name:'Adrenal Surge', desc:'+35% gerak & +25% fire rate.' }
+];
+
+let _resolveSkillPick = null;
+function resolvePick(skill){ if (_resolveSkillPick) { const r=_resolveSkillPick; _resolveSkillPick=null; hideSkillSelect(); r(skill); } }
+
+function hideSkillSelect(){ if (!skillSelectEl) return; skillSelectEl.classList.add('hidden'); skillGridEl.innerHTML=''; }
+function showSkillSelect(){ if (!skillSelectEl) return; skillSelectEl.classList.remove('hidden'); }
+
+function presentSkillSelection(){
+	return new Promise((resolve)=>{
+		_resolveSkillPick = resolve;
+		// generate 3 unik
+		const pool = [...S_SKILLS];
+		const picks = [];
+		for (let i=0;i<3;i++) { const idx = Math.floor(Math.random()*pool.length); picks.push(pool.splice(idx,1)[0]); }
+		skillGridEl.innerHTML='';
+		picks.forEach(p => skillGridEl.appendChild(buildCardEl(p)));
+		showSkillSelect();
 	});
 }
 

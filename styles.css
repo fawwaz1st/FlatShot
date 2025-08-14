@@ -173,3 +173,40 @@ body {
 
 .hit-vignette { position:fixed; inset:0; pointer-events:none; z-index:8; background: radial-gradient(200px 200px at 50% 50%, rgba(255,0,0,0), rgba(0,0,0,0)) , radial-gradient(800px 500px at 50% 50%, rgba(255,0,0,0.0), rgba(0,0,0,0.0)), linear-gradient(0deg, rgba(0,0,0,0), rgba(0,0,0,0)); box-shadow: inset 0 0 180px 60px rgba(255,60,60,0.0); transition: box-shadow .12s ease, background .12s ease; }
 .hit-vignette.show { box-shadow: inset 0 0 220px 80px rgba(255,60,60,0.38); } 
+
+@keyframes toastIn { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+@keyframes toastOut { from { transform: translate(-50%, 0); opacity: 1; } to { transform: translate(-50%, 20px); opacity: 0; } }
+.weapon-toast { position: fixed; left:50%; bottom:26px; transform: translateX(-50%); background: rgba(10,12,18,0.75); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 12px; z-index:8; pointer-events:none; display:none; box-shadow:0 10px 24px rgba(0,0,0,0.45); }
+.weapon-toast.show { display:block; animation: toastIn .18s ease-out, toastOut .24s ease-in .9s forwards; }
+.weapon-toast .label { font-weight:700; color:#fff; }
+.weapon-toast .sub { font-size:12px; color:#a8b2c6; margin-left:6px; } 
+
+.killstreak-toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; padding:8px 14px; border-radius:10px; z-index:9; pointer-events:none; display:none; box-shadow:0 10px 24px rgba(0,0,0,0.45); }
+.killstreak-toast.show { display:block; animation: toastIn .18s ease-out, toastOut .3s ease-in 1.2s forwards; }
+.powerups { position: fixed; right: 12px; bottom: 18px; display:flex; gap:8px; z-index:8; }
+.powerups .pu { background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); padding:6px 10px; border-radius:999px; font-size:12px; color:#fff; box-shadow:0 6px 16px rgba(0,0,0,0.3);} 
+
+/* Skill selection */
+.skill-card-wrap { max-width: 760px; }
+.skill-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; margin-top:12px; }
+.skill-card { position: relative; padding: 16px; border-radius: 12px; background: rgba(12,14,22,0.9); border:1px solid rgba(255,255,255,0.12); cursor: pointer; overflow: hidden; box-shadow: 0 10px 28px rgba(0,0,0,0.45); transform: translateZ(0); }
+.skill-card::before { content:""; position:absolute; inset:-2px; background: conic-gradient(from 0deg, rgba(48,207,208,0.0), rgba(48,207,208,0.3), rgba(51,8,103,0.25), rgba(48,207,208,0.0)); filter: blur(10px); opacity: 0.0; transition: opacity .25s ease; z-index:0; }
+.skill-card .inner { position:relative; z-index:1; display:grid; gap:8px; text-align:left; }
+.skill-card h3 { margin:0; font-size:18px; }
+.skill-card p { margin:0; font-size:13px; color:#cdd3e0; }
+.skill-card .rar { position:absolute; right:10px; top:10px; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,0.2); }
+.skill-card .hex { position:absolute; left:-26px; top:-26px; width:96px; height:96px; background: radial-gradient(closest-side, rgba(48,207,208,0.5), rgba(48,207,208,0)); filter: blur(8px); opacity:0.6; transform: rotate(30deg); }
+.skill-card:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(0,0,0,0.55); }
+.skill-card:hover::before { opacity: 1; animation: sweep 1.2s linear infinite; }
+.skill-card:hover .inner h3 { text-shadow: 0 0 12px rgba(48,207,208,0.5); }
+
+@keyframes sweep { from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
+
+/* rarity colors */
+.r-S { background: linear-gradient(180deg, rgba(255,215,0,0.15), rgba(255,255,255,0.05)); color:#ffe28a; border-color: rgba(255,215,0,0.45); }
+.r-A { background: linear-gradient(180deg, rgba(143,179,255,0.15), rgba(255,255,255,0.05)); color:#8fb3ff; border-color: rgba(143,179,255,0.35); }
+.r-B { background: linear-gradient(180deg, rgba(154,230,110,0.15), rgba(255,255,255,0.05)); color:#b8f4a8; border-color: rgba(154,230,110,0.35); }
+.r-C { background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05)); color:#eaeaea; border-color: rgba(255,255,255,0.22); }
+
+/* Allow overlay to stack above countdown */
+#skillSelect { z-index: 30; } 

@@ -6,7 +6,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 import { Enemy } from './modules/enemy.js';
 import { Ally } from './modules/ally.js';
-import { AmmoPickup } from './modules/pickup.js';
+import { AmmoPickup, SkillPickup } from './modules/pickup.js';
 import { HUD } from './modules/hud.js';
 import { AudioFX } from './modules/audio.js';
 import { Grenade } from './modules/grenade.js';
@@ -87,6 +87,14 @@ export default class Game {
 		this._lastIndicatorMs = 0;
 		this._lastEnemyShotSfxMs = 0;
 		this._lastEnemyTracerMs = 0;
+		this._shakeOffset = new THREE.Vector3();
+		this._shakeTime = 0;
+		this._lastHurtSfxMs = 0;
+		this._fovBase = this.camera.fov;
+		this._activeMuzzleLight = null;
+		this._impactDecals = [];
+		this._switchAnim = { active:false, t:0, dir:1, duration:0.18, target:'pistol', onComplete:null };
+		this._deathAnim = { active:false, t:0 };
 
 		this.setupLights();
 		this.setupWorld();
@@ -96,6 +104,8 @@ export default class Game {
 		this.createAmbientParticles();
 		this.createSunSprite();
 		this.updateHUD();
+		this.powerups = { shield:0, damage:0, speed:0 };
+		this._streak = { count:0, timer:0 };
 	}
 
 	setAimAssistDegrees(deg){
@@ -132,6 +142,7 @@ export default class Game {
 	setFov(deg){
 		this.config.fov = Math.max(50, Math.min(110, deg));
 		this.camera.fov = this.config.fov; this.camera.updateProjectionMatrix();
+		this._fovBase = this.config.fov;
 	}
 	setRenderScale(scale){
 		this.config.renderScale = Math.max(0.5, Math.min(1.25, scale));
@@ -170,8 +181,8 @@ export default class Game {
 		};
 		const onKey = (e, down) => {
 			switch (e.code) {
-				case 'Digit1': if (down) { this.player.weapon = 'pistol'; this.updateHUD(); } break;
-				case 'Digit2': if (down) { this.player.weapon = 'grenade'; this.updateHUD(); } break;
+				case 'Digit1': if (down) { this.queueWeaponSwitch('pistol', 'Pistol', '[1]'); } break;
+				case 'Digit2': if (down) { this.queueWeaponSwitch('grenade', 'Granat', '[2]'); } break;
 				case 'KeyW': case 'ArrowUp': state.forward = down; break;
 				case 'KeyS': case 'ArrowDown': state.backward = down; break;
 				case 'KeyA': case 'ArrowLeft': state.left = down; break;
@@ -322,7 +333,9 @@ export default class Game {
 			recoilY: 0,
 			recoilZ: 0,
 			trajLine: null,
-			trajPositions: null
+			trajPositions: null,
+			basePos,
+			baseRot
 		};
 		this.camera.add(group);
 	}
@@ -381,14 +394,24 @@ export default class Game {
 		this.scene.background.setHSL(0.62, 0.5, 0.05 + (elev*0.03+0.04));
 		this.scene.fog.color.setHSL(0.62, 0.4, 0.05 + (elev*0.03+0.04));
 
+		// Hapus offset shake sebelumnya agar movement & kolisi tidak terpengaruh
+		if (this._shakeOffset && (this._shakeOffset.x || this._shakeOffset.y || this._shakeOffset.z)) {
+			this.camera.position.sub(this._shakeOffset);
+			this._shakeOffset.set(0,0,0);
+		}
+
 		this.updatePlayer(dt);
 		this.updateEnemies(dt);
 		this.updateAllies(dt);
 		this.updatePickups(dt);
 		this.updateGrenades(dt);
 		this.updateWeapon(dt);
+		this.updateCameraShake(dt);
+		this.updateWeaponSwitch(dt);
+		this.updateDeathAnim(dt);
 		this.updateParticles(dt);
 		this.updateGrenadeAim(dt);
+		this.updatePowerups(dt);
 		this.handleFireInputs();
 
 		// reset edge flags per frame
@@ -407,6 +430,8 @@ export default class Game {
 
 	updatePlayer(dt) {
 		const speed = (this.input.run ? this.player.speedRun : this.player.speedWalk);
+		// powerup speed boost
+		const speedBoost = (this.powerups.speed>0)?1.3:1.0;
 		const direction = new THREE.Vector3();
 		direction.set(0, 0, 0);
 		if (this.input.forward) direction.z += 1;
@@ -423,8 +448,13 @@ export default class Game {
 		move.copy(camDir).multiplyScalar(direction.z).add(camRight.multiplyScalar(direction.x));
 		if (move.lengthSq() > 0) move.normalize();
 
-		const step = speed * dt;
+		const step = speed * speedBoost * dt;
 		this.tryMove(move.multiplyScalar(step));
+		// footstep SFX sederhana
+		if ((this.input.forward||this.input.backward||this.input.left||this.input.right)){
+			this._footTimer = (this._footTimer||0) - dt;
+			if (this._footTimer<=0){ this._footTimer = this.input.run?0.26:0.42; try{ this.audio.footstep({ run:this.input.run }); }catch(_){} }
+		}
 
 		// Jump & gravity
 		const gravity = -20;
@@ -510,17 +540,24 @@ export default class Game {
 
 	tryShoot() {
 		const now = performance.now() / 1000;
-		const interval = 1 / (this.player.weapon === 'pistol' ? this.player.fireRate : 1.5);
+		const baseRate = (this.player.weapon === 'pistol' ? this.player.fireRate : 1.5);
+		const effRate = baseRate * (this.perks?.fireRateMult||1.0);
+		const interval = 1 / effRate;
 		if (now - this.player.lastShotTime < interval) return;
 		if (this.player.reloading) return;
+		if (this._switchAnim.active) return; // blokir tembak saat transisi
 		if (this.player.weapon === 'pistol') {
 			if (this.player.ammoInMag <= 0) { this.audio.click(); return; }
 			this.player.lastShotTime = now;
 			this.player.ammoInMag -= 1;
 			this.updateHUD();
 			this.audio.shoot();
+			try { this.audio.duckBgm(0.45, 160); } catch(_) {}
 			this.kickRecoil();
 			this.playMuzzleFlash();
+			this.spawnMuzzleLight();
+			this.spawnMuzzleSmoke();
+			this.ejectCasing();
 			this.shake.amp = Math.min(1.2, this.shake.amp + 0.15);
 
 			// arah tembak dengan aim assist cone (derajat)
@@ -543,18 +580,26 @@ export default class Game {
 				const start = this.weapon.muzzle.getWorldPosition(new THREE.Vector3());
 				this.spawnTracer(start, shotPoint);
 				this.spawnBulletSparks(start, shotPoint);
+				this.spawnImpactDecal(shotPoint);
 			}
 			if (enemy && point) {
-				const dead = enemy.applyDamage(this.damageByDifficulty(28, 12));
+				// headshot kasar: jika titik kena lebih tinggi dari pusat musuh
+				const head = enemy.mesh.position.clone(); head.y += 1.5;
+				const isHead = point.distanceTo(head) < 0.6;
+				const dmgBase = this.damageByDifficulty(28, 12);
+				const dmgMult = (this.powerups.damage>0?1.5:1.0) * (this.perks?.damageMult||1.0) * (isHead?1.8:1.0);
+				const dead = enemy.applyDamage(dmgBase * dmgMult);
 				this.audio.hit();
+				if (isHead) try { this.audio.headshot(); } catch(_) {}
 				this.spawnHitMarker(point);
 				this.spawnHitSparks(point, 10, 0xfff1a8);
-				if (dead) { this.world.score += 10; this.updateHUD(); this.removeEnemy(enemy); this.spawnEnemy(); }
+				if (dead) { this.world.score += 10 * (isHead?1.5:1.0); this.onEnemyKilled(); this.updateHUD(); this.removeEnemy(enemy); this.spawnEnemy(); }
 			}
 		}
 	}
 
 	handleFireInputs(){
+		if (this._switchAnim.active) return;
 		// Pistol: tahan untuk auto-fire sesuai fireRate
 		if (this.player.weapon === 'pistol') {
 			if (this.input.shoot) this.tryShoot();
@@ -667,7 +712,7 @@ export default class Game {
 		this._screenFlash(0.45, 160);
 		let t = 0;
 		const tick = () => {
-			if (t > 1.1) { this.scene.remove(group); glow.geometry.dispose(); glow.material.dispose(); ring1.geometry.dispose(); ring1.material.dispose(); ring2.material.dispose(); smoke.material.map?.dispose?.(); smoke.material.dispose(); return; }
+			if (t > 1.1) { this.scene.remove(group); glow.geometry.dispose(); glow.material.dispose(); ring1.geometry.dispose(); ring1.material.dispose(); ring2.material.dispose(); smoke.material.dispose(); return; }
 			const s = THREE.MathUtils.lerp(0.3, 9.0, t);
 			glow.scale.setScalar(s);
 			ring1.scale.setScalar(THREE.MathUtils.lerp(1, 26, t)); ring1.material.opacity = 0.95 * (1 - t);
@@ -917,13 +962,13 @@ export default class Game {
 
 	updateEnemies(dt) {
 		const playerPos = this.controls.getObject().position;
+		const playerMoving = (this.input.forward || this.input.backward || this.input.left || this.input.right);
+		// atur skill musuh ringan berdasarkan skor agar dinamis
+		const skill = Math.min(1.5, 1.0 + this.world.score / 200);
 		for (const enemy of this.world.enemies) {
-			const act = enemy.update(dt, playerPos, this.world.obstacles, this._obstacleMeshes);
+			const act = enemy.update(dt, playerPos, this.world.obstacles, this._obstacleMeshes, { grenades: this.world.grenades, skill, playerMoving });
 			if (act.contact) {
-				this.player.health -= this.damageByDifficulty(10, 5) * dt;
-				if (Math.random() < 0.05) this.audio.playerHurt();
-				if (this.player.health <= 0) { this.gameOver(); return; }
-				this.updateHUD();
+				this.takePlayerDamage(this.damageByDifficulty(10, 5) * dt, enemy.mesh.position.clone());
 			}
 			if (act.shoot) {
 				let target = { pos: playerPos, isPlayer: true };
@@ -934,22 +979,35 @@ export default class Game {
 				}
 				const nowMs = performance.now();
 				if (nowMs - this._lastEnemyTracerMs > 50) {
-					this.spawnTracer(enemy.mesh.position.clone(), target.pos.clone(), 0xff6b6b);
+					// tambahkan sedikit spread berdasarkan akurasi act.acc
+					const origin = enemy.mesh.position.clone();
+					const dir = target.pos.clone().sub(origin).setY(0).normalize();
+					const spread = (1 - (act.acc ?? 0.6)) * 0.15; // radian kasar
+					const ang = (Math.random()-0.5) * spread;
+					const rot = new THREE.Matrix4().makeRotationY(ang);
+					const d3 = dir.clone().applyMatrix4(rot);
+					const end = origin.clone().add(d3.multiplyScalar(nd));
+					this.spawnTracer(origin, end, 0xff6b6b);
 					this.showShotIndicator(enemy.mesh.position.clone());
 					this.playEnemyShotAudio(enemy.mesh.position.clone());
 					this.spawnEnemyMuzzleFlash(enemy.mesh.position.clone());
 					this._lastEnemyTracerMs = nowMs;
 				}
 				if (target.isPlayer) {
-					this.player.health -= this.damageByDifficulty(8, 6);
-					this.pulseHitVignette(enemy.mesh.position.clone());
-					// ricochet kecil di sekitar kamera agar terasa kena
-					try { this.audio.ricochet(); } catch(_) {}
-					if (this.player.health <= 0) { this.gameOver(); return; }
-					this.updateHUD();
+					// hit probability berdasarkan akurasi
+					const hitProb = Math.max(0.1, Math.min(0.9, (act.acc ?? 0.6)));
+					if (Math.random() < hitProb) {
+						this.takePlayerDamage(this.damageByDifficulty(8, 6), enemy.mesh.position.clone());
+						try { this.audio.ricochet(); } catch(_) {}
+						if (this.player.health <= 0) { this.gameOver(); return; }
+						this.updateHUD();
+					}
 				} else if (target.ally) {
-					target.ally.health -= this.damageByDifficulty(10, 6);
-					if (target.ally.health <= 0) this.removeAlly(target.ally);
+					const hitProbA = Math.max(0.1, Math.min(0.9, (act.acc ?? 0.6)) * 0.95);
+					if (Math.random() < hitProbA) {
+						target.ally.health -= this.damageByDifficulty(10, 6);
+						if (target.ally.health <= 0) this.removeAlly(target.ally);
+					}
 				}
 			}
 		}
@@ -965,7 +1023,7 @@ export default class Game {
 			const a = Math.random() * Math.PI * 2; const r = 30 + Math.random()*60;
 			const p = new THREE.Vector3(playerPos.x + Math.cos(a)*r, 0.1, playerPos.z + Math.sin(a)*r);
 			this.spawnExplosion(p);
-			if (this.audio) try { this.audio.explosion({ volume: 0.4 }); } catch(_) {}
+			if (this.audio) try { this.audio.explosion({ volume: 0.4 }); this.audio.duckBgm(0.35, 300); } catch(_) {}
 		}
 	}
 
@@ -1171,9 +1229,35 @@ export default class Game {
 	gameOver() {
 		this.player.health = 0;
 		this.updateHUD();
-		this.animating = false;
-		this.controls.unlock();
-		window.dispatchEvent(new CustomEvent('game:gameOver', { detail: { score: this.world.score } }));
+		this.startDeathAnim();
+	}
+
+	startDeathAnim(){
+		if (this._deathAnim.active) return;
+		this._deathAnim = { active:true, t:0 };
+		try { this.audio.duckBgm(0.2, 800); this.audio.playerHurt(); } catch(_) {}
+	}
+
+	updateDeathAnim(dt){
+		if (!this._deathAnim.active) return;
+		const d = this._deathAnim; d.t += dt;
+		// kamera jatuh ke samping + turun
+		const k = Math.min(1, d.t / 1.0);
+		const fall = THREE.MathUtils.smoothstep(k, 0, 1);
+		const camObj = this.controls.getObject();
+		camObj.position.y = THREE.MathUtils.lerp( this.player.y, Math.max(0.4, this.player.y - 1.0), fall);
+		this.camera.rotation.z = THREE.MathUtils.lerp(0, 0.9, fall);
+		// layar fade gelap via transition overlay
+		if (k > 0.2){
+			const el = document.getElementById('transition');
+			if (el){ el.classList.remove('hidden'); el.style.transition = 'opacity 0.8s ease'; el.style.background = '#000'; el.style.opacity = Math.min(1, (k-0.2)/0.6); }
+		}
+		if (k >= 1.0){
+			this._deathAnim.active = false;
+			this.animating = false;
+			this.controls.unlock();
+			window.dispatchEvent(new CustomEvent('game:gameOver', { detail: { score: this.world.score } }));
+		}
 	}
 
 	updateHUD() {
@@ -1213,5 +1297,165 @@ export default class Game {
 		flash.position.copy(new THREE.Vector3(pos.x, 1.6, pos.z));
 		this.scene.add(flash);
 		setTimeout(()=> this.scene.remove(flash), 60);
+	}
+
+	spawnMuzzleLight(){
+		try { if (this._activeMuzzleLight) { this.scene.remove(this._activeMuzzleLight); this._activeMuzzleLight = null; } } catch(_) {}
+		const light = new THREE.PointLight(0xfff1a8, 2.2, 6);
+		light.position.copy(this.weapon.muzzle.getWorldPosition(new THREE.Vector3()));
+		this.scene.add(light); this._activeMuzzleLight = light;
+		setTimeout(()=>{ try{ this.scene.remove(light); if (this._activeMuzzleLight===light) this._activeMuzzleLight=null; }catch(_){} }, 60);
+	}
+
+	spawnMuzzleSmoke(){
+		const tex = this._getSmokeTexture();
+		const mat = new THREE.SpriteMaterial({ map: tex, color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
+		const spr = new THREE.Sprite(mat);
+		spr.scale.set(0.6, 0.6, 1);
+		spr.position.copy(this.weapon.muzzle.getWorldPosition(new THREE.Vector3()));
+		this.scene.add(spr);
+		let t=0; const tick=()=>{
+			if (t>1){ this.scene.remove(spr); mat.dispose(); return; }
+			spr.material.opacity = 0.55 * (1 - t);
+			spr.scale.setScalar(THREE.MathUtils.lerp(0.6, 2.0, t));
+			spr.position.y += 0.002;
+			t+=0.08; requestAnimationFrame(tick);
+		}; tick();
+	}
+
+	ejectCasing(){
+		const geom = new THREE.CylinderGeometry(0.006, 0.006, 0.018, 8);
+		const mat = new THREE.MeshBasicMaterial({ color: 0xc2b280 });
+		const mesh = new THREE.Mesh(geom, mat);
+		const origin = this.weapon.group.localToWorld(new THREE.Vector3(-0.06, -0.02, -0.1));
+		mesh.position.copy(origin);
+		this.scene.add(mesh);
+		let vx = -0.5 + Math.random()*-0.6; let vy = 0.8 + Math.random()*0.5; let vz = -0.2 + Math.random()*0.4;
+		let t=0; const tick=()=>{
+			if (t>0.6){ this.scene.remove(mesh); geom.dispose(); mat.dispose(); return; }
+			vy += -5 * 0.016;
+			mesh.position.x += vx * 0.016; mesh.position.y += vy * 0.016; mesh.position.z += vz * 0.016;
+			mesh.rotation.x += 0.2; mesh.rotation.y += 0.3;
+			t+=0.016; requestAnimationFrame(tick);
+		}; tick();
+	}
+
+	spawnImpactDecal(point){
+		if (!point) return;
+		const size = 0.24;
+		const ring = new THREE.RingGeometry(size*0.5, size, 24);
+		const mat = new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+		const mesh = new THREE.Mesh(ring, mat);
+		mesh.position.set(point.x, point.y + 0.01, point.z);
+		mesh.rotation.x = -Math.PI/2;
+		this.scene.add(mesh);
+		this._impactDecals.push(mesh);
+		setTimeout(()=>{
+			try { this.scene.remove(mesh); ring.dispose(); mat.dispose(); } catch(_) {}
+			this._impactDecals = this._impactDecals.filter(m=>m!==mesh);
+		}, 400);
+	}
+
+	updateCameraShake(dt){
+		// decay amplitude
+		this.shake.amp = Math.max(0, this.shake.amp - this.shake.decay * dt);
+		this._shakeTime += dt * 60;
+		const a = this.shake.amp;
+		if (a > 0.0001){
+			const n1 = Math.sin(this._shakeTime * 0.13);
+			const n2 = Math.sin(this._shakeTime * 0.29 + 1.7);
+			const n3 = Math.sin(this._shakeTime * 0.47 + 0.6);
+			const offX = (n1*0.4 + n2*0.6) * 0.004 * a;
+			const offY = (n2*0.5 + n3*0.5) * 0.003 * a;
+			const offZ = (n1*0.3 + n3*0.7) * 0.002 * a;
+			this._shakeOffset.set(offX, offY, offZ);
+			this.camera.position.add(this._shakeOffset);
+			// FOV punch ringan
+			this.camera.fov = THREE.MathUtils.lerp(this._fovBase, this._fovBase + 1.8 * a, 0.6);
+			this.camera.updateProjectionMatrix();
+		}
+		else if (this.camera.fov !== this._fovBase){
+			this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this._fovBase, 0.2);
+			this.camera.updateProjectionMatrix();
+		}
+	}
+
+	queueWeaponSwitch(target, label='Pistol', hint='[1]'){
+		if (this._switchAnim.active || this.player.weapon === target || this.player.reloading) { return; }
+		this._switchAnim.active = true; this._switchAnim.t = 0; this._switchAnim.dir = -1; this._switchAnim.duration = 0.16; this._switchAnim.target = target;
+		this._switchAnim.onComplete = () => {
+			this.player.weapon = target; this.updateHUD();
+			this._switchAnim.dir = 1; this._switchAnim.t = 0; this._switchAnim.duration = 0.14;
+		};
+		try { this.audio.weaponSwitch(); this.audio.duckBgm(0.6, 180); } catch(_) {}
+		// toast UI
+		this.showWeaponToast(label, hint);
+	}
+
+	showWeaponToast(label, hint){
+		const el = document.getElementById('weaponToast'); if (!el) return;
+		el.querySelector('.label').textContent = label;
+		el.querySelector('.sub').textContent = hint;
+		el.classList.remove('hidden');
+		el.classList.add('show');
+		clearTimeout(this._toastTimer);
+		this._toastTimer = setTimeout(()=>{ el.classList.add('hidden'); el.classList.remove('show'); }, 1300);
+	}
+
+	updateWeaponSwitch(dt){
+		if (!this._switchAnim.active || !this.weapon) return;
+		const a = this._switchAnim;
+		a.t += dt;
+		const k = Math.min(1, a.t / a.duration);
+		// progress: 0->1 untuk lower, lalu raise
+		const dir = a.dir; // -1 turun, +1 naik
+		const p = dir < 0 ? k : k;
+		const drop = dir < 0 ? THREE.MathUtils.lerp(0, -0.22, p) : THREE.MathUtils.lerp(-0.22, 0, p);
+		const tilt = dir < 0 ? THREE.MathUtils.lerp(0, 0.24, p) : THREE.MathUtils.lerp(0.24, 0, p);
+		// terapkan ke weapon group relatif base
+		const bp = this.weapon.basePos; const br = this.weapon.baseRot;
+		this.weapon.group.position.set(bp.x, bp.y + drop, bp.z);
+		this.weapon.group.rotation.set(br.x + tilt, br.y, br.z);
+		if (k >= 1){
+			if (dir < 0 && typeof a.onComplete === 'function') { const cb = a.onComplete; a.onComplete = null; cb(); a.t = 0; return; }
+			if (dir > 0) { a.active = false; }
+		}
+	}
+
+	onEnemyKilled(){
+		// killstreak
+		this._streak.count += 1; this._streak.timer = 3.0;
+		if (this._streak.count>=2){ this.showStreakToast(`Killstreak x${this._streak.count}!`); try{ this.audio.streak(); }catch(_){} }
+	}
+
+	showStreakToast(text){ const el=document.getElementById('streakToast'); if(!el) return; el.textContent=text; el.classList.remove('hidden'); el.classList.add('show'); clearTimeout(this._streakToastTimer); this._streakToastTimer=setTimeout(()=>{ el.classList.add('hidden'); el.classList.remove('show'); }, 1600); }
+
+	updatePowerups(dt){
+		// timer decrease
+		for (const k of Object.keys(this.powerups)){ if (this.powerups[k]>0) this.powerups[k]=Math.max(0,this.powerups[k]-dt); }
+		// streak timer decay
+		if (this._streak.timer>0){ this._streak.timer-=dt; if (this._streak.timer<=0) this._streak.count=0; }
+		// render HUD
+		const wrap = document.getElementById('powerups'); if (!wrap) return; wrap.innerHTML='';
+		const active = Object.entries(this.powerups).filter(([k,v])=>v>0);
+		if (active.length===0){ wrap.classList.add('hidden'); return; }
+		wrap.classList.remove('hidden');
+		for (const [k,v] of active){ const d=document.createElement('div'); d.className='pu'; d.textContent=`${k.toUpperCase()} ${Math.ceil(v)}s`; wrap.appendChild(d); }
+	}
+
+	takePlayerDamage(amount, fromPos){
+		let dmg = amount;
+		if (this.perks && this.perks.shield > 0){
+			const use = Math.min(this.perks.shield, dmg);
+			this.perks.shield -= use; dmg -= use;
+		}
+		if (dmg > 0){
+			this.player.health -= dmg;
+		}
+		this.pulseHitVignette(fromPos||this.controls.getObject().position.clone());
+		const nowMs = performance.now();
+		if (nowMs - this._lastHurtSfxMs > 140) { try { this.audio.playerHurt(); } catch(_) {} this._lastHurtSfxMs = nowMs; }
+		if (this.player.health <= 0) { this.gameOver(); return; }
+		this.updateHUD();
 	}
 } 
