@@ -1,6 +1,6 @@
 # FlatShot ⚡
 
-[![License: TBD](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#) [![Three.js](https://img.shields.io/badge/Three.js-vR%20-%233399ff.svg)](#) [![Play Locally](https://img.shields.io/badge/Play%20Locally-%E2%9A%A1-brightgreen.svg)](#)
+[![License: TBD](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#) [![Three.js](https://img.shields.io/badge/Three.js-vR%20-%233399ff.svg)](#) [![Play Locally](https://img.shields.io/badge/Play%20Locally-%E2%9A%A1-brightgreen.svg)](https://fawwaz1st.github.io/FlatShot/)
 
 FlatShot adalah arena FPS ringan berbasis web (HTML/CSS/JS + Three.js) yang dirancang untuk gameplay cepat, VFX ledakan sinematik, dan AI sekutu/musuh yang responsif — semua berjalan langsung di browser tanpa bundler.
 
@@ -9,9 +9,15 @@ Kenapa FlatShot?
 - Fokus gameplay: movement cepat, granat dengan lintasan prediksi, dan combat yang terasa padat.
 - Visual sinematik: ledakan realtime, debris, dan smoke billboard yang menambah rasa "impact".
 
-<!-- HERO / Screenshot -->
+<!-- PLAY / HERO -->
 <p align="center">
-  <img src="docs/Screenshot game.png" alt="FlatShot gameplay screenshot — HUD menunjukkan HP, ammo, skor, dan lintasan granat" width="880" />
+  <a href="https://fawwaz1st.github.io/FlatShot/" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Play%20Online-%F0%9F%8E%89-blue?style=for-the-badge" alt="Play Online badge" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="docs/Screenshot game.png" alt="FlatShot gameplay screenshot — HUD menunjukkan HP, ammo, skor, dan lintasan granat" width="880" style="border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.45);" />
   <br/>
   <em>Screenshot: tampilan in-game dengan HUD (HP, ammo, skor, sekutu) dan lintasan granat.</em>
 </p>
