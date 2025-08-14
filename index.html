@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="id">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+	<title>FPS Web Seru</title>
+	<link rel="preconnect" href="https://unpkg.com">
+	<script type="importmap">{
+		"imports": {
+			"three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+			"three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+		}
+	}</script>
+	<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+	<div id="transition" class="transition hidden"></div>
+	<div id="menu" class="overlay">
+		<div class="menu-ambient">
+			<span></span><span></span><span></span><span></span><span></span>
+			<span></span><span></span><span></span><span></span><span></span>
+		</div>
+		<div class="menu-card">
+			<h1 class="logo-anim">FlatShot</h1>
+			<p class="subtitle">Arena FPS ringan, cepat, dan seru langsung di browser.</p>
+			<div class="menu-tabs">
+				<button id="tabStart" class="active">Mulai</button>
+				<button id="tabOptions">Pengaturan</button>
+				<button id="tabAbout">Tentang</button>
+			</div>
+			<div class="menu-panels">
+				<section id="panelStart" class="panel show">
+					<p>Tekan mulai untuk mempersiapkan pertempuran.</p>
+					<div class="menu-actions">
+						<button id="playBtn">Mulai</button>
+					</div>
+				</section>
+				<section id="panelOptions" class="panel">
+					<div class="menu-grid">
+						<label>Kesulitan
+							<select id="difficulty">
+								<option value="normal">Normal</option>
+								<option value="hard">Hard</option>
+								<option value="insane">Insane</option>
+							</select>
+						</label>
+						<label>Sensitivitas
+							<input id="sensitivity" type="range" min="0.3" max="2.0" step="0.1" value="0.8" />
+						</label>
+						<label>Bloom
+							<input id="bloom" type="range" min="0" max="1.5" step="0.05" value="0.7" />
+						</label>
+						<label>Senjata Awal
+							<select id="startWeapon">
+								<option value="pistol">Pistol</option>
+								<option value="grenade">Granat</option>
+							</select>
+						</label>
+						<label>Volume Master
+							<input id="volMaster" type="range" min="0" max="1" step="0.01" value="1" />
+						</label>
+						<label>Volume Musik
+							<input id="volMusic" type="range" min="0" max="1" step="0.01" value="0.15" />
+						</label>
+						<label>Volume SFX
+							<input id="volSfx" type="range" min="0" max="1" step="0.01" value="1" />
+						</label>
+						<label>Crosshair Offset X (px)
+							<input id="reticleX" type="range" min="-100" max="100" step="1" value="0" />
+						</label>
+						<label>Crosshair Offset Y (px)
+							<input id="reticleY" type="range" min="-100" max="100" step="1" value="0" />
+						</label>
+						<label>Crosshair Size
+							<input id="reticleSize" type="range" min="2" max="16" step="1" value="6" />
+						</label>
+						<label>Crosshair Color
+							<input id="reticleColor" type="color" value="#ffffff" />
+						</label>
+						<label>
+							<button id="reticleReset" class="secondary">Reset Crosshair</button>
+						</label>
+						<label>Lock Crosshair Center
+							<input id="reticleLock" type="checkbox" />
+						</label>
+						<label>Aim Assist (°)
+							<input id="aimAssist" type="range" min="0" max="10" step="0.5" value="0" />
+						</label>
+						<label>
+							<button id="presetRealistic">Preset: Realistic</button>
+						</label>
+						<label>Preset Grafis
+							<select id="gfxPreset">
+								<option value="low">Low</option>
+								<option value="medium">Medium</option>
+								<option value="high">High</option>
+								<option value="ultra" selected>Ultra</option>
+							</select>
+						</label>
+						<label>FOV
+							<input id="fov" type="range" min="55" max="100" step="1" value="70" />
+						</label>
+						<label>Render Scale
+							<input id="renderScale" type="range" min="0.5" max="1.25" step="0.05" value="1" />
+						</label>
+						<label>Fog Density
+							<input id="fog" type="range" min="0" max="0.06" step="0.005" value="0.02" />
+						</label>
+						<label>Jarak Gambar
+							<input id="drawDist" type="range" min="200" max="1200" step="50" value="600" />
+						</label>
+						<label>Partikel Ambient
+							<input id="particles" type="range" min="0" max="1200" step="50" value="400" />
+						</label>
+						<label>Soundtrack
+							<select id="soundtrack">
+								<option value="synth" selected>Synthwave</option>
+								<option value="retro">Retro</option>
+								<option value="off">Off</option>
+							</select>
+						</label>
+					</div>
+				</section>
+				<section id="panelAbout" class="panel">
+					<p>FlatShot adalah prototipe FPS ringan berbasis WebGL (Three.js) yang berfokus pada gameplay cepat dan ramah perangkat.</p>
+					<p>Kontrol: WASD untuk bergerak, Shift berlari, Space lompat, klik kiri menembak, R reload, 1/2 ganti senjata (Pistol/Granat). Gunakan opsi di Pengaturan untuk menyesuaikan sensitivitas, FOV, kualitas grafis, jarak gambar, densitas kabut, dan jumlah partikel agar sesuai kemampuan perangkat.</p>
+					<p>Fitur utama: AI musuh yang mengejar dan menembak, sekutu yang membantu bertarung, pickup amunisi/health/granat, efek partikel, indikator arah tembakan, dan sistem granat fisik dengan gravitasi dan pantulan.</p>
+					<p>Tips performa: turunkan Render Scale dan Partikel Ambient bila FPS turun, pilih preset grafis Low/Medium, atau kurangi Jarak Gambar. Gunakan aim assist ringan bila bermain dengan touchpad.</p>
+					<p>Terinspirasi oleh berbagai shooter web klasik dan contoh mekanik game komunitas. Proyek ini dibuat untuk eksperimen edukasi dan hiburan.</p>
+				</section>
+			</div>
+		</div>
+	</div>
+
+	<div id="hud" class="hud hidden">
+		<div class="hud-row">
+			<div class="hud-bar hp"><div id="hpBar" class="fill" style="width:100%"></div><span id="hp">100</span></div>
+			<div class="hud-bar ammo"><div id="ammoBar" class="fill" style="width:100%"></div><span id="ammoWrap"><span id="ammo">15</span>/<span id="reserve">60</span></span></div>
+			<div class="grenades" id="gWrap"></div>
+			<div class="pill pill-score">Skor: <span id="score">0</span></div>
+			<div class="pill pill-allies">Sekutu: <span id="allies">0</span></div>
+		</div>
+	</div>
+
+	<div id="crosshair" class="crosshair crosshair-dot hidden"></div>
+	<div id="reloadFX" class="reloadfx hidden"></div>
+	<div id="shotIndicator" class="shot-indicator hidden"></div>
+	<div id="countdown" class="countdown hidden"><span id="countText">3</span></div>
+
+	<div id="gameover" class="overlay hidden">
+		<div class="menu-card">
+			<h2>Kalah!</h2>
+			<p>Skor kamu: <strong id="finalScore">0</strong></p>
+			<div class="menu-actions">
+				<button id="btnRestartGO">Main Lagi</button>
+				<button id="btnMenuGO" class="secondary">Ke Menu</button>
+			</div>
+		</div>
+	</div>
+
+	<noscript>
+		<p>Silakan aktifkan JavaScript. Gunakan browser modern yang mendukung WebGL.</p>
+	</noscript>
+
+	<script type="module" src="./src/main.js"></script>
+</body>
+</html> 
