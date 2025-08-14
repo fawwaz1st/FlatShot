@@ -48,6 +48,7 @@ const fogEl = document.getElementById('fog');
 const drawDistEl = document.getElementById('drawDist');
 const particlesEl = document.getElementById('particles');
 const soundtrackEl = document.getElementById('soundtrack');
+const fpsEl = document.getElementById('fps');
 
 let game = new Game();
 // Start menu bgm
@@ -113,6 +114,7 @@ function bindVolumes(){
 	drawDistEl?.addEventListener('input', e => game.setDrawDistance(parseInt(e.target.value,10)));
 	particlesEl?.addEventListener('input', e => game.setParticles(parseInt(e.target.value,10)));
 	soundtrackEl?.addEventListener('change', e => { try { game.audio.setSoundtrackMode(e.target.value); } catch(_) {} });
+	fpsEl?.addEventListener('change', e => game.setFps(parseInt(e.target.value,10)));
 }
 
 function boxShadowDot(el, color){ el.style.boxShadow = `0 0 8px ${color}AA`; }
@@ -142,6 +144,7 @@ function applyMenuSettings() {
 	if (particlesEl) game.setParticles(parseInt(particlesEl.value,10));
 	// soundtrack
 	if (soundtrackEl) game.audio.setSoundtrackMode(soundtrackEl.value);
+	if (fpsEl) game.setFps(parseInt(fpsEl.value,10));
 }
 
 async function startGameFlow(){

@@ -37,6 +37,8 @@ export default class Game {
 		this.audio = new AudioFX();
 
 		this.input = this.createInputState();
+		this.targetFps = 60; // default
+		this._accum = 0; this._minFrameTime = 1/this.targetFps;
 		this.player = {
 			velocity: new THREE.Vector3(),
 			speedWalk: 5,
@@ -366,7 +368,11 @@ export default class Game {
 	loop() {
 		if (!this.animating) return;
 		requestAnimationFrame(() => this.loop());
-		const dt = Math.min(0.05, this.clock.getDelta());
+		const dtRaw = this.clock.getDelta();
+		this._accum += dtRaw;
+		if (this._accum < this._minFrameTime) return; // limiter FPS
+		const dt = Math.min(0.05, this._accum);
+		this._accum = 0;
 
 		// Siklus siang-malam: ubah posisi matahari dan warna langit/fog
 		const cyc = (performance.now() * 0.00005) % (Math.PI * 2);
@@ -390,6 +396,12 @@ export default class Game {
 		this.input.shootReleased = false;
 
 		this.composer.render();
+	}
+
+	setFps(fps){
+		const clamped = Math.max(30, Math.min(240, fps||60));
+		this.targetFps = clamped;
+		this._minFrameTime = 1 / this.targetFps;
 	}
 
 	updatePlayer(dt) {
@@ -763,6 +775,13 @@ export default class Game {
 		const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
 		const line = new THREE.Line(geom, mat);
 		this.scene.add(line);
+		// SFX whizz jika dekat kamera
+		const cam = this.camera.position;
+		const seg = new THREE.Vector3().subVectors(end, start);
+		const toCam = new THREE.Vector3().subVectors(cam, start);
+		const t = Math.max(0, Math.min(1, toCam.dot(seg.clone().normalize()) / seg.length()));
+		const closest = start.clone().add(seg.multiplyScalar(t));
+		if (closest.distanceTo(cam) < 2.2) { try { this.audio.whizz(); } catch(_) {} }
 		setTimeout(() => {
 			mat.opacity = 0.0;
 			this.scene.remove(line);
@@ -880,14 +899,18 @@ export default class Game {
 					if (d < nd) { nd = d; target = { pos: ally.mesh.position, isPlayer: false, ally }; }
 				}
 				const nowMs = performance.now();
-				if (nowMs - this._lastEnemyTracerMs > 70) {
+				if (nowMs - this._lastEnemyTracerMs > 50) {
 					this.spawnTracer(enemy.mesh.position.clone(), target.pos.clone(), 0xff6b6b);
 					this.showShotIndicator(enemy.mesh.position.clone());
 					this.playEnemyShotAudio(enemy.mesh.position.clone());
+					this.spawnEnemyMuzzleFlash(enemy.mesh.position.clone());
 					this._lastEnemyTracerMs = nowMs;
 				}
 				if (target.isPlayer) {
 					this.player.health -= this.damageByDifficulty(8, 6);
+					this.pulseHitVignette(enemy.mesh.position.clone());
+					// ricochet kecil di sekitar kamera agar terasa kena
+					try { this.audio.ricochet(); } catch(_) {}
 					if (this.player.health <= 0) { this.gameOver(); return; }
 					this.updateHUD();
 				} else if (target.ally) {
@@ -901,6 +924,14 @@ export default class Game {
 		const desired = 12 + Math.floor(this.world.score / 30);
 		if (this.world.enemies.length < desired && this.animating) {
 			this.spawnEnemy();
+		}
+
+		// ambience pertempuran: ledakan jauh acak
+		if (Math.random() < 0.004) {
+			const a = Math.random() * Math.PI * 2; const r = 30 + Math.random()*60;
+			const p = new THREE.Vector3(playerPos.x + Math.cos(a)*r, 0.1, playerPos.z + Math.sin(a)*r);
+			this.spawnExplosion(p);
+			if (this.audio) try { this.audio.explosion({ volume: 0.4 }); } catch(_) {}
 		}
 	}
 
@@ -1000,7 +1031,7 @@ export default class Game {
 
 	showShotIndicator(fromPos) {
 		const now = performance.now();
-		if (now - this._lastIndicatorMs < 80) return; // throttle agar tidak flood DOM & event
+		if (now - this._lastIndicatorMs < 60) return; // sedikit lebih sering
 		this._lastIndicatorMs = now;
 		const indicator = document.getElementById('shotIndicator');
 		if (!indicator) return;
@@ -1013,7 +1044,7 @@ export default class Game {
 		indicator.style.transform = `translate(-50%,-50%) rotate(${angle}rad)`;
 		indicator.classList.add('visible');
 		clearTimeout(this._shotIndicatorTimer);
-		this._shotIndicatorTimer = setTimeout(()=>indicator.classList.remove('visible'), 160);
+		this._shotIndicatorTimer = setTimeout(()=>indicator.classList.remove('visible'), 280);
 	}
 
 	playEnemyShotAudio(fromPos){
@@ -1131,5 +1162,19 @@ export default class Game {
 		if (gWrap) { gWrap.innerHTML = ''; for (let i=0;i<this.player.grenades;i++) { const d=document.createElement('div'); d.className='dot'; gWrap.appendChild(d);} }
 		if (scoreEl) scoreEl.textContent = this.world.score.toString();
 		if (alliesEl) alliesEl.textContent = this.world.allies.length.toString();
+	}
+
+	pulseHitVignette(fromPos){
+		const el = document.getElementById('hitVignette'); if (!el) return;
+		el.classList.remove('hidden'); el.classList.add('show');
+		clearTimeout(this._hitVigTimer);
+		this._hitVigTimer = setTimeout(()=>{ el.classList.remove('show'); el.classList.add('hidden'); }, 180);
+	}
+
+	spawnEnemyMuzzleFlash(pos){
+		const flash = new THREE.PointLight(0xff6b6b, 2.0, 6);
+		flash.position.copy(new THREE.Vector3(pos.x, 1.6, pos.z));
+		this.scene.add(flash);
+		setTimeout(()=> this.scene.remove(flash), 60);
 	}
 } 

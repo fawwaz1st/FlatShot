@@ -45,7 +45,9 @@ body {
 	border-radius: 8px;
 	padding: 8px;
 	accent-color: #30cfd0;
+	color: #fff; /* teks putih agar terbaca */
 }
+.menu-grid select option { color:#000; background:#fff; }
 
 .menu-actions { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
 .menu-card button {
@@ -168,3 +170,6 @@ body {
 .shot-indicator { position: fixed; left:50%; top:50%; width:120px; height:120px; transform: translate(-50%,-50%); border-radius:50%; pointer-events:none; z-index:7; opacity:0; transition: opacity .12s linear; will-change: transform, opacity; }
 .shot-indicator.visible { opacity: 1; }
 .shot-indicator::after { content:""; position:absolute; left:50%; top:0; width:2px; height:14px; background:#ff6b6b; transform: translateX(-50%); box-shadow:0 0 8px rgba(255,107,107,0.8); } 
+
+.hit-vignette { position:fixed; inset:0; pointer-events:none; z-index:8; background: radial-gradient(200px 200px at 50% 50%, rgba(255,0,0,0), rgba(0,0,0,0)) , radial-gradient(800px 500px at 50% 50%, rgba(255,0,0,0.0), rgba(0,0,0,0.0)), linear-gradient(0deg, rgba(0,0,0,0), rgba(0,0,0,0)); box-shadow: inset 0 0 180px 60px rgba(255,60,60,0.0); transition: box-shadow .12s ease, background .12s ease; }
+.hit-vignette.show { box-shadow: inset 0 0 220px 80px rgba(255,60,60,0.38); } 

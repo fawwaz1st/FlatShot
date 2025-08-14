@@ -71,6 +71,10 @@ export class AudioFX {
 	click() { this.beep({ duration: 0.02, frequency: 120, type: 'square', volume: 0.14, decay: 0.02 }); }
 	playerHurt() { this.beep({ duration: 0.06, frequency: 140, type: 'sawtooth', volume: 0.22, decay: 0.04 }); }
 
+	// Peluru melintas (whizz) dan ricochet sederhana
+	whizz() { this.beep({ duration: 0.06, frequency: 900, type: 'sine', volume: 0.15, decay: 0.05 }); }
+	ricochet() { this.beep({ duration: 0.04, frequency: 1200, type: 'triangle', volume: 0.18, decay: 0.05 }); }
+
 	// SFX Ledakan: layer noise burst (crack), low boom, tail
 	explosion({ volume = 1.0 } = {}){
 		this._runAfterUnlock(() => {
@@ -178,7 +182,7 @@ export class AudioFX {
 		setTimeout(() => {
 			this.bgmNodes.forEach(n => { try { n.stop && n.stop(); n.disconnect && n.disconnect(); } catch(e){} });
 			this.bgmNodes = [];
-			this.bgmGain.disconnect();
+			try { this.bgmGain && this.bgmGain.disconnect && this.bgmGain.disconnect(); } catch(e) {}
 			this.bgmGain = null;
 			this._started = false;
 		}, fade ? 650 : 0);
