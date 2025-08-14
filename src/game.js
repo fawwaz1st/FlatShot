@@ -399,7 +399,8 @@ export default class Game {
 	}
 
 	setFps(fps){
-		const clamped = Math.max(30, Math.min(240, fps||60));
+		if (!fps || fps <= 0) { this.targetFps = 0; this._minFrameTime = 0; return; }
+		const clamped = Math.max(30, Math.min(240, fps));
 		this.targetFps = clamped;
 		this._minFrameTime = 1 / this.targetFps;
 	}
@@ -858,7 +859,40 @@ export default class Game {
 		ally.dispose(this.scene);
 		this.world.allies = this.world.allies.filter(a => a !== ally);
 		this.updateHUD();
-		setTimeout(() => this.spawnAlly(), 2000);
+		setTimeout(() => this.spawnAllyWithEmerge(), 1600);
+	}
+
+	spawnAllyWithEmerge(){
+		// pilih posisi sekitar player namun tidak terlalu dekat
+		const p = this.controls.getObject().position;
+		let pos = new THREE.Vector3(p.x + (Math.random()-0.5)*10, 0, p.z + (Math.random()-0.5)*10);
+		// VFX: portal ring kecil dan partikel debu dari tanah
+		const ringGeo = new THREE.RingGeometry(0.2, 0.25, 32);
+		const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+		const ring = new THREE.Mesh(ringGeo, ringMat); ring.rotation.x = -Math.PI/2; ring.position.set(pos.x, 0.02, pos.z);
+		this.scene.add(ring);
+		const dust = this._spawnDebris(new THREE.Vector3(pos.x, 0.05, pos.z), 30);
+		try { this.audio.summon(); } catch(_) {}
+		// Beacon cahaya
+		const beacon = new THREE.SpotLight(0x38bdf8, 2.0, 20, Math.PI/5, 0.5, 1.2);
+		beacon.position.set(pos.x, 4, pos.z);
+		beacon.target.position.set(pos.x, 0, pos.z);
+		this.scene.add(beacon); this.scene.add(beacon.target);
+		let t=0; const tick=()=>{
+			if (t>1) { this.scene.remove(ring); ring.geometry.dispose(); ring.material.dispose(); return; }
+			ring.scale.setScalar(THREE.MathUtils.lerp(1, 6, t)); ring.material.opacity = 0.9*(1-t);
+			beacon.intensity = 2.0 * (1 - t);
+			t+=0.06; requestAnimationFrame(tick);
+		}; tick();
+		setTimeout(()=>{ this.scene.remove(dust.obj); dust.dispose(); }, 500);
+		// munculnya ally dari tanah: lerp Y dari -0.5 ke 1 (tinggi badan 1)
+		setTimeout(()=>{
+			const ally = new Ally(this.scene, pos);
+			this.world.allies.push(ally);
+			if (ally.mesh) { ally.mesh.position.y = -0.5; let k=0; const rise=()=>{ if (k>=1) return; k+=0.06; ally.mesh.position.y = THREE.MathUtils.lerp(-0.5, 1, k); requestAnimationFrame(rise); }; rise(); }
+			this.updateHUD();
+			setTimeout(()=>{ this.scene.remove(beacon); this.scene.remove(beacon.target); }, 600);
+		}, 180);
 	}
 
 	updateAllies(dt) {
@@ -1073,12 +1107,15 @@ export default class Game {
 
 	updatePickups(dt) {
 		const now = performance.now() / 1000;
-		if (now - this.world.lastPickupSpawn > 3.5 && this.world.pickups.length < 8) {
+		const maxPickups = 12; // lebih banyak pickup
+		const interval = 2.6; // lebih sering
+		if (now - this.world.lastPickupSpawn > interval && this.world.pickups.length < maxPickups) {
 			this.world.lastPickupSpawn = now;
 			const bounds = this.world.bounds - 5;
 			const pos = new THREE.Vector3((Math.random()-0.5)*bounds*2, 0, (Math.random()-0.5)*bounds*2);
 			const r = Math.random();
-			const type = r < 0.65 ? 'pistol' : (r < 0.85 ? 'grenade' : 'health');
+			// bias ke health/ammo agar membantu player
+			const type = r < 0.5 ? 'pistol' : (r < 0.85 ? 'health' : 'grenade');
 			const p = new AmmoPickup(this.scene, pos, type);
 			this.world.pickups.push(p);
 		}
@@ -1087,7 +1124,7 @@ export default class Game {
 		const playerPosXZ = this.controls.getObject().position;
 		for (const p of [...this.world.pickups]) {
 			if (!p.alive) continue;
-			if (p.mesh.position.distanceTo(playerPosXZ) < 1.2) {
+			if (p.mesh.position.distanceTo(playerPosXZ) < 1.4) {
 				if (p.type === 'grenade') this.player.grenades += p.amount; 
 				else if (p.type === 'health') this.player.health = Math.min(100, this.player.health + p.amount);
 				else this.player.ammoReserve += p.amount;
@@ -1098,7 +1135,7 @@ export default class Game {
 			}
 			for (const ally of this.world.allies) {
 				if (!p.alive) break;
-				if (p.mesh.position.distanceTo(ally.mesh.position) < 1.2) {
+				if (p.mesh.position.distanceTo(ally.mesh.position) < 1.0) { // sedikit diperkecil agar tidak selalu diambil ally
 					if (p.type === 'grenade') this.player.grenades += Math.max(1, Math.floor(p.amount * 0.5));
 					else if (p.type === 'health') this.player.health = Math.min(100, this.player.health + Math.floor(p.amount * 0.5));
 					else this.player.ammoReserve += Math.floor(p.amount * 0.5);

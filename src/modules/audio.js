@@ -75,6 +75,22 @@ export class AudioFX {
 	whizz() { this.beep({ duration: 0.06, frequency: 900, type: 'sine', volume: 0.15, decay: 0.05 }); }
 	ricochet() { this.beep({ duration: 0.04, frequency: 1200, type: 'triangle', volume: 0.18, decay: 0.05 }); }
 
+	// SFX summon/emerge ally: whoosh + chime
+	summon(){
+		this._runAfterUnlock(()=>{
+			const ctx = this.ctx; this.ensureCtx(); const now = ctx.currentTime;
+			// whoosh (bandpass noise naik)
+			const noise = ctx.createBufferSource(); noise.buffer = this._getNoiseBuffer();
+			const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(200, now); bp.frequency.exponentialRampToValueAtTime(1200, now+0.25);
+			const g = ctx.createGain(); g.gain.setValueAtTime(0.001, now); g.gain.exponentialRampToValueAtTime(0.5, now+0.04); g.gain.exponentialRampToValueAtTime(0.0001, now+0.35);
+			noise.connect(bp).connect(g).connect(this.sfxGain); noise.start(now); noise.stop(now+0.36);
+			// chime
+			const osc = ctx.createOscillator(); osc.type='sine'; osc.frequency.setValueAtTime(800, now+0.05); osc.frequency.exponentialRampToValueAtTime(1600, now+0.18);
+			const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.001, now+0.05); g2.gain.exponentialRampToValueAtTime(0.3, now+0.08); g2.gain.exponentialRampToValueAtTime(0.0001, now+0.4);
+			osc.connect(g2).connect(this.sfxGain); osc.start(now+0.05); osc.stop(now+0.42);
+		});
+	}
+
 	// SFX Ledakan: layer noise burst (crack), low boom, tail
 	explosion({ volume = 1.0 } = {}){
 		this._runAfterUnlock(() => {
