@@ -132,7 +132,7 @@ npx http-server -p 8080
 - Tidak perlu bundler; modul diimpor via ES Modules.
 - Gunakan server statis untuk development.
 - Gaya kode: nama variabel deskriptif, early-return, dan tanpa dependensi berat.
-- Jika menambahkan asset besar (audio/texture), letakkan di `assets/` dan perbarui path relative.
+- Jika menambahkan asset besar (texture), letakkan di `assets/` dan perbarui path relative. Untuk audio, proyek ini menggunakan synth internal / streaming online secara default—sebaiknya hindari menambahkan file audio lokal kecuali benar-benar diperlukan.
 
 ---
 
@@ -151,6 +151,16 @@ npx http-server -p 8080
 4. Jaga readability dan performa; tambahkan tests/log minimal bila perlu
 
 Untuk PR besar, buka issue terlebih dahulu agar kita bisa diskusikan design.
+
+---
+
+## Perubahan Terbaru (ringkas)
+- **Audio (countdown & SFX)**: menambahkan `countdownBeepStep` untuk beep countdown yang bersih (sine + envelope halus), sementara menurunkan `sfxGate` selama countdown dan merestore secara bertahap untuk menghilangkan noise tajam. Juga ada perbaikan synth-samples dan penguatan `explosion` synth agar ledakan terasa lebih berdampak.
+- **VFX Ledakan & Granat**: `spawnExplosion(center, powerMultiplier)` ditambahkan — visual (glow, ring, smoke, debris, sparks, screen flash) dan camera shake diskalakan oleh `powerMultiplier`; ledakan yang dilempar player kini lebih 'berdampak' dan damage area diskalakan.
+- **Tracer / Peluru**: tracer pool dan glow pool diperbesar serta TTL tracer diperpanjang agar lintasan peluru (tracer) lebih konsisten dan terlihat pada berbagai perangkat.
+- **UI Card (Tier‑S)**: hover & click VFX ditingkatkan dan dipastikan memanggil SFX (playSample 'pick') dengan fallback beep; visual ring/burst tetap dipertahankan.
+- **Kontrol Kebisingan & Opsi**: toggle cepat (tekan `N`) untuk mode quiet, dan hold `M` untuk mute ambient agresif selama bermain. Penyesuaian volume BGM/SFX dilakukan agar transisi lebih halus.
+- **Kompatibilitas**: semua perubahan bersifat penambahan/penyempurnaan pada `src/` (JS) dan tidak merubah struktur folder atau dependensi; tetap kompatibel dengan workflow GitHub / halaman statis (`index.html`) seperti sebelumnya.
 
 ---
 

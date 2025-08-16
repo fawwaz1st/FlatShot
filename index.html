@@ -15,6 +15,15 @@
 	<link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+	<!-- SVG sprite (icons) -->
+	<svg xmlns="http://www.w3.org/2000/svg" style="display:none; width:0; height:0;">
+		<defs>
+			<symbol id="icon-star" viewBox="0 0 24 24"><path fill="#ffd166" d="M12 2l2.39 4.85L20 8.24l-3.2 3.12L17.8 16 12 13.77 6.2 16l1-4.64L4 8.24l5.61-1.39L12 2z"/></symbol>
+			<symbol id="icon-users" viewBox="0 0 24 24"><path fill="#8fb3ff" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zM6 11c1.66 0 2.99-1.34 2.99-3S7.66 5 6 5 3 6.34 3 8s1.34 3 3 3zm10 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z"/></symbol>
+			<symbol id="icon-bell" viewBox="0 0 24 24"><path fill="#30cfd0" d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/></symbol>
+			<symbol id="icon-clock" viewBox="0 0 24 24"><path fill="#9ae66e" d="M12 8v5l3 3 .99-1.01L13 12.5V8zM12 2a10 10 0 1 0 10 10A10.011 10.011 0 0 0 12 2z"/></symbol>
+		</defs>
+	</svg>
 	<div id="transition" class="transition hidden"></div>
 	<div id="menu" class="overlay">
 		<div class="menu-ambient">
@@ -22,29 +31,26 @@
 			<span></span><span></span><span></span><span></span><span></span>
 		</div>
 		<div class="menu-card">
-			<h1 class="logo-anim">FlatShot</h1>
-			<p class="subtitle">Arena FPS ringan, cepat, dan seru langsung di browser.</p>
+			<h1 class="logo-anim">FlatShot <span class="menu-icon" aria-hidden>🎯</span></h1>
+			<p class="menu-note">Mode sulit berubah otomatis selama permainan untuk pengalaman dinamis.</p>
+			<p class="subtitle" data-i18n="logo_subtitle">Arena FPS ringan, cepat, dan seru langsung di browser.</p>
 			<div class="menu-tabs">
-				<button id="tabStart" class="active">Mulai</button>
-				<button id="tabOptions">Pengaturan</button>
-				<button id="tabAbout">Tentang</button>
+				<button id="tabStart" class="active" data-i18n="tab_start">Mulai</button>
+				<button id="tabOptions" data-i18n="tab_options">Pengaturan</button>
+				<button id="tabAbout" data-i18n="tab_about">Tentang</button>
 			</div>
 			<div class="menu-panels">
 				<section id="panelStart" class="panel show">
-					<p>Tekan mulai untuk mempersiapkan pertempuran.</p>
+					<p data-i18n="start_prompt">Tekan mulai untuk mempersiapkan pertempuran.</p>
 					<div class="menu-actions">
-						<button id="playBtn">Mulai</button>
+						<button id="playBtn" data-i18n="play">Mulai</button>
+						<button id="restartBtn" class="secondary hidden">Restart</button>
 					</div>
 				</section>
 				<section id="panelOptions" class="panel">
 					<div class="menu-grid">
-						<label>Kesulitan
-							<select id="difficulty">
-								<option value="normal">Normal</option>
-								<option value="hard">Hard</option>
-								<option value="insane">Insane</option>
-							</select>
-						</label>
+						<!-- Difficulty dihilangkan: difficulty sekarang auto-adjust in-game -->
+						<div class="pill pill-info" data-i18n="difficulty_auto">Kesulitan: <strong>Auto</strong></div>
 						<label>Sensitivitas
 							<input id="sensitivity" type="range" min="0.3" max="2.0" step="0.1" value="0.8" />
 						</label>
@@ -66,6 +72,54 @@
 						<label>Volume SFX
 							<input id="volSfx" type="range" min="0" max="1" step="0.01" value="1" />
 						</label>
+
+						<!-- Presets group -->
+						<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+							<button id="presetRealistic" data-i18n="preset_realistic" class="menu-action small">Realistic</button>
+							<button id="presetCompetitive" data-i18n="preset_competitive" class="menu-action small">Competitive</button>
+							<button id="presetPerformance" data-i18n="preset_performance" class="menu-action small">Performance</button>
+							<button id="presetCinematic" data-i18n="preset_cinematic" class="menu-action small">Cinematic</button>
+						</div>
+
+						<!-- Compact advanced options -->
+						<details class="advanced-settings">
+							<summary data-i18n="advanced_settings">Advanced Settings</summary>
+							<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+								<label>Preset Grafis
+									<select id="gfxPreset">
+										<option value="low">Low</option>
+										<option value="medium">Medium</option>
+										<option value="high">High</option>
+										<option value="ultra" selected>Ultra</option>
+									</select>
+								</label>
+								<label>FOV
+									<input id="fov" type="range" min="55" max="100" step="1" value="70" />
+								</label>
+								<label>Render Scale
+									<input id="renderScale" type="range" min="0.5" max="1.25" step="0.05" value="1" />
+								</label>
+								<label>Fog Density
+									<input id="fog" type="range" min="0" max="0.06" step="0.005" value="0.02" />
+								</label>
+								<label>Jarak Gambar
+									<input id="drawDist" type="range" min="200" max="1200" step="50" value="600" />
+								</label>
+								<label>Partikel Ambient
+									<input id="particles" type="range" min="0" max="1200" step="50" value="400" />
+								</label>
+								<label>Framerate
+									<select id="fps">
+										<option value="30">30</option>
+										<option value="60" selected>60</option>
+										<option value="90">90</option>
+										<option value="120">120</option>
+										<option value="144">144</option>
+										<option value="0">Unlimited</option>
+									</select>
+								</label>
+							</div>
+						</details>
 						<label>Crosshair Offset X (px)
 							<input id="reticleX" type="range" min="-100" max="100" step="1" value="0" />
 						</label>
@@ -87,47 +141,36 @@
 						<label>Aim Assist (°)
 							<input id="aimAssist" type="range" min="0" max="10" step="0.5" value="0" />
 						</label>
-						<label>
-							<button id="presetRealistic">Preset: Realistic</button>
-						</label>
-						<label>Preset Grafis
-							<select id="gfxPreset">
-								<option value="low">Low</option>
-								<option value="medium">Medium</option>
-								<option value="high">High</option>
-								<option value="ultra" selected>Ultra</option>
-							</select>
-						</label>
-						<label>FOV
-							<input id="fov" type="range" min="55" max="100" step="1" value="70" />
-						</label>
-						<label>Render Scale
-							<input id="renderScale" type="range" min="0.5" max="1.25" step="0.05" value="1" />
-						</label>
-						<label>Fog Density
-							<input id="fog" type="range" min="0" max="0.06" step="0.005" value="0.02" />
-						</label>
-						<label>Jarak Gambar
-							<input id="drawDist" type="range" min="200" max="1200" step="50" value="600" />
-						</label>
-						<label>Partikel Ambient
-							<input id="particles" type="range" min="0" max="1200" step="50" value="400" />
-						</label>
-						<label>Soundtrack
-							<select id="soundtrack">
+						<label>Menu Soundtrack
+							<select id="menuSoundtrack">
 								<option value="synth" selected>Synthwave</option>
 								<option value="retro">Retro</option>
+								<option value="lofi">Lofi</option>
+								<option value="chill">Chill</option>
+								<option value="electro">Electro</option>
+								<option value="cinematic">Cinematic</option>
+								<option value="ambient">Ambient</option>
+								<option value="rock">Rock</option>
 								<option value="off">Off</option>
 							</select>
 						</label>
-						<label>Framerate
-							<select id="fps">
-								<option value="30">30</option>
-								<option value="60" selected>60</option>
-								<option value="90">90</option>
-								<option value="120">120</option>
-								<option value="144">144</option>
-								<option value="0">Unlimited</option>
+						<label>Bahasa
+							<select id="langSelect">
+								<option value="id" selected>Bahasa (ID)</option>
+								<option value="en">English</option>
+							</select>
+						</label>
+						<label>Game Soundtrack
+							<select id="gameSoundtrack">
+								<option value="synth" selected>Synthwave</option>
+								<option value="retro">Retro</option>
+								<option value="lofi">Lofi</option>
+								<option value="chill">Chill</option>
+								<option value="electro">Electro</option>
+								<option value="cinematic">Cinematic</option>
+								<option value="ambient">Ambient</option>
+								<option value="rock">Rock</option>
+								<option value="off">Off</option>
 							</select>
 						</label>
 					</div>
@@ -147,9 +190,20 @@
 		<div class="hud-row">
 			<div class="hud-bar hp"><div id="hpBar" class="fill" style="width:100%"></div><span id="hp">100</span></div>
 			<div class="hud-bar ammo"><div id="ammoBar" class="fill" style="width:100%"></div><span id="ammoWrap"><span id="ammo">15</span>/<span id="reserve">60</span></span></div>
+			<div class="pill pill-weapon" id="weaponPill"><span id="weaponIcon">🔫</span> <span id="weaponName">Pistol</span> <span id="skillCooldown" class="skill-cd"></span></div>
 			<div class="grenades" id="gWrap"></div>
-			<div class="pill pill-score">Skor: <span id="score">0</span></div>
-			<div class="pill pill-allies">Sekutu: <span id="allies">0</span></div>
+			<div class="pill pill-time"><svg class="hud-icon" width="18" height="18" aria-hidden><use href="#icon-clock" xlink:href="#icon-clock"></use></svg><span id="playTime">00:00</span></div>
+			<div class="pill pill-score"><svg class="hud-icon" width="18" height="18" aria-hidden><use href="#icon-star" xlink:href="#icon-star"></use></svg><span class="pill-label" data-i18n="score_label">Skor:</span> <span id="score">0</span></div>
+			<div class="pill pill-allies"><svg class="hud-icon" width="18" height="18" aria-hidden><use href="#icon-users" xlink:href="#icon-users"></use></svg><span class="pill-label" data-i18n="allies_label">Sekutu:</span> <span id="allies">0</span></div>
+		</div>
+	</div>
+
+	<!-- Leaderboard (tahan Tab untuk tampil) -->
+	<div id="leaderboard" class="overlay hidden">
+		<div class="menu-card">
+			<h2>Leaderboard</h2>
+			<p class="subtitle">Tahan <strong>Tab</strong> untuk melihat status tim</p>
+			<div class="menu-grid" id="leaderboardGrid"></div>
 		</div>
 	</div>
 	<div id="weaponToast" class="weapon-toast hidden"><span class="label">Pistol</span><span class="sub">[1]</span></div>

@@ -1,0 +1,24 @@
+{
+  "id": {
+    "score_label": "Skor:",
+    "allies_label": "Sekutu:",
+    "logo_subtitle": "Arena FPS ringan, cepat, dan seru langsung di browser.",
+    "tab_start": "Mulai",
+    "tab_options": "Pengaturan",
+    "tab_about": "Tentang",
+    "start_prompt": "Tekan mulai untuk mempersiapkan pertempuran.",
+    "play": "Mulai",
+    "preset_realistic": "Preset: Realistic"
+  },
+  "en": {
+    "score_label": "Score:",
+    "allies_label": "Allies:",
+    "logo_subtitle": "Lightweight, fast, and fun browser FPS.",
+    "tab_start": "Start",
+    "tab_options": "Options",
+    "tab_about": "About",
+    "start_prompt": "Press start to prepare for battle.",
+    "play": "Play",
+    "preset_realistic": "Preset: Realistic"
+  }
+} 
