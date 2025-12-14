@@ -45,50 +45,23 @@ export function attachPlayerController(game) {
 					player.velocity.x -= moveX * speed * 40.0 * delta;
 				}
 
-				// --- DYNAMIC FOOTSTEP SYSTEM ---
-				// Logic: Grounded + Moving -> Timer -> Play Sound
+				// --- AUDIO ENGINE 2.0: LOGIC FIX ---
+				// Throttle footsteps to prevent "Machine Gun" noise
 				const isGrounded = !player.jumping && (player.y <= 1.65);
 				const isMoving = _pDir.lengthSq() > 0;
+				const velocitySq = player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z;
 
-				if (isGrounded && isMoving) {
-					if (typeof this._stepTimer === 'undefined') this._stepTimer = 0;
-					// Interval: 0.35s running, 0.5s walking
-					const stepInterval = this.input.sprint ? 0.35 : 0.5;
+				if (isGrounded && isMoving && velocitySq > 0.5) {
+					const now = Date.now();
+					// Default 450ms walk, 350ms run
+					const interval = this.input.sprint ? 350 : 450;
 
-					this._stepTimer -= dt;
-					if (this._stepTimer <= 0) {
-						this._stepTimer = stepInterval;
-
-						// Pitch Variation: 0.9 - 1.1
-						const pitch = 0.9 + Math.random() * 0.2;
-
-						// Play Audio
-						if (this.audio) {
-							// If 'footstep' method exists in audio module, use it
-							if (typeof this.audio.footstep === 'function') {
-								try { this.audio.footstep({ run: this.input.sprint, playbackRate: pitch }); } catch (_) { }
-							}
-							// Logic-only placeholder (Synthetic Beep) if no asset/method
-							else if (this.audio.context && this.audio.context.state === 'running') {
-								try {
-									const osc = this.audio.context.createOscillator();
-									const gain = this.audio.context.createGain();
-									osc.frequency.value = this.input.sprint ? 180 : 120;
-									osc.detune.value = (pitch - 1.0) * 1000;
-									osc.type = 'triangle';
-									gain.gain.setValueAtTime(0.05, this.audio.context.currentTime);
-									gain.gain.exponentialRampToValueAtTime(0.001, this.audio.context.currentTime + 0.1);
-									osc.connect(gain);
-									gain.connect(this.audio.context.destination);
-									osc.start();
-									osc.stop(this.audio.context.currentTime + 0.1);
-								} catch (_) { }
-							}
+					if (now - (this._lastStepTime || 0) > interval) {
+						if (this.audio && typeof this.audio.footstep === 'function') {
+							this.audio.footstep();
 						}
+						this._lastStepTime = now;
 					}
-				} else {
-					// Reset timer so first step is immediate upon moving
-					this._stepTimer = 0;
 				}
 
 				this.controls.moveRight(-player.velocity.x * delta);
@@ -107,11 +80,43 @@ export function attachPlayerController(game) {
 				if (this.input.jump && !player.jumping) {
 					player.vy = (this.config.player?.jumpForce || 8.5);
 					player.jumping = true;
+					// TRIGGER JUMP SFX
+					if (this.audio && typeof this.audio.jump === 'function') {
+						this.audio.jump();
+					}
 				}
 				player.vy += (this.config.player?.gravity || -20) * dt;
 				player.y += player.vy * dt;
 				if (player.y <= 1.6) { player.y = 1.6; player.vy = 0; player.jumping = false; }
-				this.controls.getObject().position.y = player.y;
+				// --- HEAD BOB (PROCEDURAL) ---
+				if (isMoving && isGrounded) {
+					const bobFreq = this.input.sprint ? 18.0 : 12.0;
+					const bobAmp = this.input.sprint ? 0.08 : 0.04;
+					const t = performance.now() * 0.001;
+					const bobY = Math.sin(t * bobFreq) * bobAmp;
+					const bobX = Math.cos(t * bobFreq * 0.5) * bobAmp * 0.5;
+
+					// Apply to camera local
+					this.camera.position.y = player.y + bobY;
+					// Optional: slight roll
+					this.camera.rotation.z = bobX * 0.5;
+				} else {
+					// Smooth reset
+					this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, player.y, 0.1);
+					this.camera.rotation.z = THREE.MathUtils.lerp(this.camera.rotation.z, 0, 0.1);
+				}
+
+				this.controls.getObject().position.y = player.y; // Base physics Y
+
+				// LANDING DETECTION
+				const currentlyGrounded = !player.jumping && (player.y <= 1.65);
+				if (!this._wasGrounded && currentlyGrounded) {
+					// Just Landed
+					if (this.audio && typeof this.audio.land === 'function' && player.velocity.y < -2.0) {
+						this.audio.land();
+					}
+				}
+				this._wasGrounded = currentlyGrounded;
 			}
 		};
 

@@ -8,7 +8,7 @@ import { PostFXShader } from './game/postProcess.js';
 import { MenuScene } from './scenes/MenuScene.js';
 import { VotingScene } from './scenes/VotingScene.js';
 import { SpatialHash } from './game/spatialHash.js';
-import { TextureGen } from './game/textureGen.js';
+import { TextureGenerator } from './rendering/TextureGenerator.js';
 
 import { Enemy } from './modules/enemy.js';
 import { Ally } from './modules/ally.js';
@@ -21,11 +21,11 @@ import { createInputState } from './game/input.js';
 import { attachAI } from './game/ai.js';
 import { attachFallbackSpawner } from './game/fallback.js';
 import { attachGameLoop } from './game/loop.js';
-import { attachSpawnManager } from './game/spawnManager.js';
-import { attachInputManager } from './game/inputManager.js';
-import { attachUIManager } from './game/uiManager.js';
-import { attachEnemyManager } from './game/enemyManager.js';
-import { attachPoolManager } from './game/poolManager.js';
+import { attachSpawnManager } from './managers/spawnManager.js';
+import { attachInputManager } from './managers/inputManager.js';
+import { attachUIManager } from './managers/uiManager.js';
+import { attachEnemyManager } from './managers/enemyManager.js';
+import { attachPoolManager } from './managers/poolManager.js';
 import { attachHudController } from './game/hudController.js';
 import { attachPlayerController } from './game/playerController.js';
 import { attachWeaponController } from './game/weaponController.js';
@@ -34,8 +34,27 @@ import { attachUIController } from './game/uiController.js';
 import { attachEffectsController } from './game/effectsController.js';
 import { attachPickupController } from './game/pickupController.js';
 
+// New modules
+import { MapGenerator, MapTypes, getAvailableMaps } from './game/MapGenerator.js';
+import { createAllyModel, createEnemyModel, updateCharacterVisuals } from './game/CharacterVisuals.js';
+import { ValueValidator, FrameLimiter, SpatialHashGrid, LODManager, SessionManager, disposeObject } from './systems/OptimizationSecurity.js';
+import { pathfinding } from './ai/Pathfinding.js';
+
+/**
+ * Helper function to check if a Vector3 has valid (non-NaN) coordinates.
+ * Prevents "Computed radius is NaN" errors in BufferGeometry.
+ */
+function isValidVector3(v) {
+	return v &&
+		typeof v.x === 'number' && !isNaN(v.x) && isFinite(v.x) &&
+		typeof v.y === 'number' && !isNaN(v.y) && isFinite(v.y) &&
+		typeof v.z === 'number' && !isNaN(v.z) && isFinite(v.z);
+}
+
 export default class Game {
-	constructor() {
+
+	constructor(container = document.body) {
+		this.container = container;
 		this.clock = new THREE.Clock();
 		this.scene = new THREE.Scene();
 		this.scene.background = new THREE.Color(0x000000);
@@ -43,8 +62,8 @@ export default class Game {
 
 		this.renderer = new THREE.WebGLRenderer({ antialias: true });
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-		this.renderer.setSize(window.innerWidth, window.innerHeight);
-		document.body.appendChild(this.renderer.domElement);
+		this.renderer.setSize(window.innerWidth, window.innerHeight); // Will update on resize
+		this.container.appendChild(this.renderer.domElement);
 
 		this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 3000);
 		this.camera.position.set(0, 1.6, 5);
@@ -145,6 +164,15 @@ export default class Game {
 		// Fix: Initialize runtime arrays/objects to prevent 'undefined' access
 		this._sceneLights = [];
 		this.weapon = {}; // Placeholder to prevent access errors before createWeapon()
+
+		// Initialize optimization systems
+		this.sessionManager = new SessionManager();
+		this.frameLimiter = new FrameLimiter(this.targetFps);
+		this.spatialHash = new SpatialHashGrid(15);
+		this.lodManager = new LODManager();
+		this.mapGenerator = new MapGenerator(this.scene);
+		this._availableMaps = getAvailableMaps();
+		this._currentMapType = 'arena';
 
 		// this.setupLights();
 		// Defer world loading until start() or explicitly called.
@@ -344,20 +372,52 @@ export default class Game {
 		}
 		this._sceneLights = [];
 
-		// Updated Visuals: Hemisphere Light + Directional Light
-		const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+		// Hemisphere Light (Sky Color + Ground Color)
+		const hemi = new THREE.HemisphereLight(0x00f0ff, 0x442222, 0.6);
 		this.scene.add(hemi);
 		this._sceneLights.push(hemi);
 
-		this.sun = new THREE.DirectionalLight(0xffffff, 1.5);
-		this.sun.position.set(20, 50, 20);
+		// Directional Light (Sun/Key Light)
+		this.sun = new THREE.DirectionalLight(0xffffff, 1.2);
+		this.sun.position.set(50, 100, 50);
 		this.sun.castShadow = true;
 		this.sun.shadow.mapSize.width = 2048;
 		this.sun.shadow.mapSize.height = 2048;
+		this.sun.shadow.camera.near = 0.5;
+		this.sun.shadow.camera.far = 500;
+		this.sun.shadow.camera.left = -100;
+		this.sun.shadow.camera.right = 100;
+		this.sun.shadow.camera.top = 100;
+		this.sun.shadow.camera.bottom = -100;
 		this.scene.add(this.sun);
 		this._sceneLights.push(this.sun);
+	}
 
-		// Ensure sun exists for loop.js
+	setupWorld() {
+		console.log("[Game] Setting up world environment...");
+
+		// 1. Lights
+		this.setupLights();
+
+		// 2. Skybox (Simple Dark Solid Color as requested)
+		this.scene.background = new THREE.Color(0x050505);
+		this.scene.fog = new THREE.FogExp2(0x050505, 0.015);
+
+		// 3. Grid Floor (Neon Style)
+		// We use a large plane with a grid shader/texture or simple helper
+		// Using Helper for performance/aesthetic match with 'textureGen' usage in loadGameLevel
+		// But loadGameLevel ALREADY creates a floor?
+		// User said: "Buat lighting... buat Floor Grid... dan Skybox".
+		// If loadGameLevel already creates floor (lines 558-574 in original game.js), maybe setupWorld handles GLOBAL env?
+		// The error was "this.setupWorld is not a function".
+		// So I just need to define it so `initializeGameAssets` doesn't crash.
+		// I will ensure it sets up the "Global" visuals that persist or are defaults.
+
+		// Note: loadGameLevel creates specific level geometry. setupWorld can be for shared assets or pre-warm.
+		// For now, I will just ensure it exists and sets the lighting/skybox as requested.
+		// Lighting is already called in loadGameLevel -> setupLights().
+		// So setupWorld mostly needs to exist to satisfy the call.
+		// But I'll put the "Skybox" logic here.
 	}
 
 	cleanupScene() {
@@ -439,11 +499,33 @@ export default class Game {
 		this._sceneLights.push(amb);
 	}
 
-	enterGame(mode) {
-		console.log(`[Game] Entering Game with Mode: ${mode}`);
+	/**
+	 * Set the map type to load
+	 * @param {string} mapType - One of: 'arena', 'city', 'warehouse', 'fortress', 'highway'
+	 */
+	setMapType(mapType) {
+		if (this._availableMaps.find(m => m.id === mapType)) {
+			this._currentMapType = mapType;
+			console.log(`[Game] Map type set to: ${mapType}`);
+		} else {
+			console.warn(`[Game] Unknown map type: ${mapType}, using arena`);
+			this._currentMapType = 'arena';
+		}
+	}
+
+	/**
+	 * Get available maps for UI
+	 */
+	getAvailableMaps() {
+		return this._availableMaps;
+	}
+
+	enterGame(mode, mapType) {
+		console.log(`[Game] Entering Game with Mode: ${mode}, Map: ${mapType || this._currentMapType}`);
+		if (mapType) this.setMapType(mapType);
 		this.cleanupScene();
-		// Instead of immediately loading level, we start countdown
-		this.startCountdown(3, mode);
+		// Start Async Load Sequence
+		this.startGameSequence(mode);
 	}
 
 	assignTeams() {
@@ -457,7 +539,71 @@ export default class Game {
 		};
 	}
 
-	startCountdown(seconds, mode) {
+	updateLoadingProgress(percent, msg) {
+		const bar = document.getElementById('loading-bar-fill');
+		const text = document.getElementById('loading-text');
+		if (bar) bar.style.width = percent + '%';
+		if (text) text.innerText = msg + ` (${Math.round(percent)}%)`;
+	}
+
+	async startGameSequence(mode) {
+		// 1. Show Loading Screen
+		if (!document.getElementById('loading-screen')) {
+			const div = document.createElement('div');
+			div.innerHTML = (await import('./ui/layouts.js')).LOADING_SCREEN_HTML; // Dynamic import to avoid cycles/wait
+			document.body.appendChild(div.firstElementChild);
+		}
+
+		console.log("[Game] Starting Async Load Sequence...");
+		this.updateLoadingProgress(0, "Initializing Engine...");
+		await new Promise(r => setTimeout(r, 50)); // Yield
+
+		try {
+			// 2. Init Assets (Async)
+			this.currentSceneMode = 'game';
+
+			// Texture Gen (Heavy)
+			this.updateLoadingProgress(20, "Generating Textures...");
+			await new Promise(r => setTimeout(r, 50));
+
+			// Ensure textures are cached/created
+			if (!this._cachedGridTex) {
+				this._cachedGridTex = TextureGenerator.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
+				this._cachedWallTex = TextureGenerator.createGrid(512, 512, '#ff0055', '#220a10', 2);
+			}
+			this.updateLoadingProgress(40, "Loading Assets...");
+			await new Promise(r => setTimeout(r, 50));
+
+			// 3. Init heavy assets (creates weapon etc)
+			await this.initializeGameAssets();
+			this.updateLoadingProgress(60, "Building World...");
+			await new Promise(r => setTimeout(r, 50));
+
+			// 4. Load Level Geometry
+			this.loadGameLevel(mode);
+			this.updateLoadingProgress(90, "Finalizing...");
+			await new Promise(r => setTimeout(r, 500)); // Artificial wait for smooth visuals
+
+			this.updateLoadingProgress(100, "Ready!");
+			await new Promise(r => setTimeout(r, 200));
+
+			// 5. Remove Loading Screen
+			const screen = document.getElementById('loading-screen');
+			if (screen) screen.remove();
+
+			// 6. Start Match Countdown (3-2-1)
+			this.startMatchCountdown(3);
+
+		} catch (e) {
+			console.error("Critical Load Error:", e);
+			alert("Error Loading Game: " + e.message);
+			// Hide loading anyway so user can see what happened
+			const screen = document.getElementById('loading-screen');
+			if (screen) screen.remove();
+		}
+	}
+
+	startMatchCountdown(seconds) {
 		// Create Overlay if not exists
 		let overlay = document.getElementById('countdown-overlay');
 		if (!overlay) {
@@ -466,49 +612,31 @@ export default class Game {
 			document.body.appendChild(overlay);
 		}
 
-		overlay.textContent = seconds;
 		overlay.classList.add('show');
-
-		// Start Loading Level in Background
-		this._levelReady = false;
-
-		// Use Promise to track loading
-		const loadPromise = new Promise((resolve) => {
-			this.currentSceneMode = 'game'; // Prepare context
-			this.initializeGameAssets().then(() => {
-				this.loadGameLevel(mode); // Load geometry/etc
-				this._levelReady = true;
-				resolve();
-			});
-		});
-
 		let count = seconds;
-		const interval = setInterval(() => {
-			count--;
+
+		const tick = () => {
 			if (count > 0) {
 				overlay.textContent = count;
 				try { this.audio.click(); } catch (_) { }
+				setTimeout(tick, 1000);
+				count--;
 			} else {
-				// Wait for level to be ready
-				if (this._levelReady) {
-					clearInterval(interval);
+				overlay.textContent = "GO!";
+				try { this.audio.start(); } catch (_) { } // start fight music logic if any
+				setTimeout(() => {
 					overlay.classList.remove('show');
-					this.startLoop();
-				} else {
-					overlay.textContent = "LOADING...";
-				}
+					this.startLoop(); // UNLOCK INPUT AND START LOOP
+					// Lock pointer now if needed?
+					// actually better to ask user to click if not locked, but loop starts logic.
+					// Pointer lock usually requires user interaction event. 
+					// We assume user clicked "Vote" or "Menu" previously, but async might break "User Activation".
+					// show "Click to Start" if lock failed? 
+					// For now, auto-start.
+				}, 500);
 			}
-		}, 1000);
-
-		// Safety check: if ready happens after count 0
-		const checkReady = setInterval(() => {
-			if (count <= 0 && this._levelReady) {
-				clearInterval(interval); // clear main timer
-				clearInterval(checkReady);
-				overlay.classList.remove('show');
-				this.startLoop();
-			}
-		}, 200);
+		};
+		tick();
 	}
 
 	startLoop() {
@@ -527,6 +655,27 @@ export default class Game {
 		console.log("[Game] Initializing heavy assets...");
 		this.setupWorld();
 		this.createWeapon();
+
+		// FIX: Force Hard Reset of Player Position/Velocity to prevent NaN
+		// CRITICAL Fix for "Black Screen of Death"
+		if (this.player) {
+			this.player.velocity = new THREE.Vector3(0, 0, 0);
+			this.player.y = 10.0; // Force valid Y (High spawn)
+			this.player.vy = 0;
+			this.player.jumping = false;
+			// Safe check for position if it exists (User request compliance)
+			if (this.player.position && typeof this.player.position.set === 'function') {
+				this.player.position.set(0, 10, 0);
+			}
+		}
+		if (this.camera) {
+			this.camera.position.set(0, 10, 0);
+			this.camera.rotation.set(0, 0, 0);
+		}
+		if (this.controls && this.controls.getObject()) {
+			this.controls.getObject().position.set(0, 10, 0);
+		}
+
 		this._gameInitialized = true;
 		return Promise.resolve();
 	}
@@ -551,11 +700,22 @@ export default class Game {
 
 		const bounds = this.world.bounds;
 
+
 		// Load World Geometry
-		const gridTex = TextureGen.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
-		const wallTex = TextureGen.createGrid(512, 512, '#ff0055', '#220a10', 2);
+		// Optimization: Cache textures to prevent slow loading on reload
+		let gridTex, wallTex;
+		if (this._cachedGridTex) {
+			gridTex = this._cachedGridTex;
+			wallTex = this._cachedWallTex;
+		} else {
+			gridTex = TextureGenerator.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
+			wallTex = TextureGenerator.createGrid(512, 512, '#ff0055', '#220a10', 2);
+			this._cachedGridTex = gridTex;
+			this._cachedWallTex = wallTex;
+		}
 
 		const floorGeo = new THREE.PlaneGeometry(bounds * 4, bounds * 4, 1, 1);
+
 		// Tiling texture
 		gridTex.repeat.set(80, 80);
 		const floorMat = new THREE.MeshStandardMaterial({
@@ -610,7 +770,7 @@ export default class Game {
 		}
 
 		// Pillars
-		const pillarTex = TextureGen.createGrid(256, 256, '#30cfd0', '#000000', 4);
+		const pillarTex = TextureGenerator.createGrid(256, 256, '#30cfd0', '#000000', 4);
 		pillarTex.repeat.set(1, 4);
 		const pillarMat = new THREE.MeshStandardMaterial({
 			map: pillarTex, color: 0x444455, roughness: 0.3, metalness: 0.8, emissive: 0x001122, emissiveIntensity: 0.5
@@ -640,7 +800,7 @@ export default class Game {
 		this._pillarInst = pillarInst;
 
 		// Platforms
-		const platTex = TextureGen.createGrid(256, 256, '#00ffff', '#111111', 2);
+		const platTex = TextureGenerator.createGrid(256, 256, '#00ffff', '#111111', 2);
 		const platMat = new THREE.MeshStandardMaterial({
 			map: platTex, color: 0x223344, roughness: 0.4, emissive: 0x001111, emissiveIntensity: 0.3
 		});
@@ -766,6 +926,26 @@ export default class Game {
 		if (this.menuScene) this.menuScene.enter();
 	}
 
+	onWindowResize() {
+		if (!this.camera || !this.renderer) return;
+		this.camera.aspect = window.innerWidth / window.innerHeight;
+		this.camera.updateProjectionMatrix();
+
+		const scale = this.config.renderScale || 1.0;
+		const width = Math.floor(window.innerWidth * scale);
+		const height = Math.floor(window.innerHeight * scale);
+
+		this.renderer.setSize(width, height);
+		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * scale);
+
+		if (this.composer) {
+			this.composer.setSize(width, height);
+		}
+		if (this.postFX && this.postFX.uniforms['resolution']) {
+			this.postFX.uniforms['resolution'].value.set(width, height);
+		}
+	}
+
 
 
 	startNextWave() {
@@ -832,9 +1012,15 @@ export default class Game {
 
 	setupEvents() {
 		const el = this.renderer.domElement;
+		window.addEventListener('resize', this.onWindowResize.bind(this));
 		el.addEventListener('click', () => {
 			if (this.currentSceneMode === 'game' && !this.controls.isLocked) {
-				this.controls.lock();
+				// Wrap in try-catch to handle SecurityError when user exits lock early
+				try {
+					this.controls.lock();
+				} catch (e) {
+					// Silently ignore pointer lock errors
+				}
 				this.dispatchResumeHUD();
 				// Ensure AudioContext is resumed
 				if (this.audio && this.audio.context && this.audio.context.state === 'suspended') {
@@ -968,6 +1154,23 @@ export default class Game {
 
 		// update player via playerController
 		if (this.currentSceneMode === 'game') {
+			// Pause Check (Pointer Lock)
+			if (this.controls && !this.controls.isLocked) {
+				if (!this.isPaused) {
+					this.isPaused = true;
+					const pm = document.getElementById('pauseMenu');
+					if (pm) pm.classList.remove('hidden');
+				}
+			} else {
+				if (this.isPaused) {
+					this.isPaused = false;
+					const pm = document.getElementById('pauseMenu');
+					if (pm) pm.classList.add('hidden');
+				}
+			}
+
+			if (this.isPaused) return; // Stop updates if paused
+
 			try { if (typeof this.updatePlayer === 'function') this.updatePlayer(dt); } catch (_) { }
 			this.updateEnemies(dt);
 			this.updateWave(dt);
@@ -1075,16 +1278,41 @@ export default class Game {
 
 	performSyncedShotRay() {
 		this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-		const enemyMeshes = (this._enemyMeshes && this._enemyMeshes.length > 0) ? this._enemyMeshes : this.world.enemies.map(e => e.mesh);
-		const obs = this._obstacleMeshes || this.world.obstacles.map(o => o.mesh);
-		const firstHits = this.raycaster.intersectObjects(enemyMeshes.concat(obs), true);
+
+		// 1. Gather Valid Raycast Targets
+		// Enemy meshes are real Object3Ds
+		const enemyMeshes = (this._enemyMeshes && this._enemyMeshes.length > 0) ? this._enemyMeshes : this.world.enemies.map(e => e.mesh).filter(m => m && m.isObject3D);
+
+		// Obstacles: Filter out virtual objects (like buildings defined only by position)
+		// and include the actual InstancedMesh for buildings if it exists.
+		let obs = this._obstacleMeshes;
+		if (!obs) {
+			obs = this.world.obstacles.map(o => o.mesh).filter(m => m && m.isObject3D);
+			if (this._buildingInst) obs.push(this._buildingInst);
+			this._obstacleMeshes = obs; // Cache it
+		}
+
+		const candidates = enemyMeshes.concat(obs);
+		if (candidates.length === 0) {
+			// fallback
+			const dir = new THREE.Vector3(); this.camera.getWorldDirection(dir);
+			return { point: this.camera.position.clone().add(dir.multiplyScalar(100)), enemy: null };
+		}
+
+		const firstHits = this.raycaster.intersectObjects(candidates, true);
 		let targetPoint = null;
 		let targetEnemy = null;
 		for (const hit of firstHits) {
-			const e = this.findHitEnemy(hit.object);
+			// Check if hit is enemy
+			let e = this.findHitEnemy(hit.object);
+			// Special case: Building InstancedMesh
+			// If we hit a building, it's not an enemy, just a blocker.
 			if (e) { targetPoint = hit.point.clone(); targetEnemy = e; break; }
 			if (!targetPoint) targetPoint = hit.point.clone();
+			// Since we want the FIRST hit, if it's not enemy, it's a blocker (wall/building), so stop.
+			break;
 		}
+		// ... logic continues ...
 		if (!targetPoint) {
 			const dir = new THREE.Vector3(); this.camera.getWorldDirection(dir);
 			targetPoint = this.camera.position.clone().add(dir.multiplyScalar(100));
@@ -1247,6 +1475,9 @@ export default class Game {
 
 	spawnHitSparks(center, count = 8, color = 0xfff1a8) {
 		if (!this._pointsPool) return;
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(center)) return;
+
 		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
@@ -1268,6 +1499,9 @@ export default class Game {
 
 	spawnBulletSparks(start, end) {
 		if (!this._pointsPool) return;
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(start) || !isValidVector3(end)) return;
+
 		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
@@ -1287,73 +1521,84 @@ export default class Game {
 	}
 
 	spawnExplosion(center, powerMultiplier = 1.0) {
+		// NaN Guard: Prevent errors from invalid position
+		if (!isValidVector3(center)) return;
+
 		const group = new THREE.Group();
 		group.position.copy(center);
-		// scale effects by particle quality setting
+
 		const particleQualityScale = Math.max(1, Math.round((this.config && this.config.particles ? this.config.particles : 300) / 150));
-		// stronger camera shake scaled by powerMultiplier
-		this.shake.amp = Math.min(8.0, (this.shake.amp || 0) + 1.2 * Math.min(4, particleQualityScale) * Math.max(1, powerMultiplier));
-		// core glow
-		const glow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
-		// shock rings
-		const ringGeo = new THREE.RingGeometry(0.2, 0.24, 48);
-		const ringMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
+		// Massive Shake
+		this.shake.amp = Math.min(12.0, (this.shake.amp || 0) + 2.5 * Math.min(4, particleQualityScale) * Math.max(1, powerMultiplier)); // Stronger shake
+
+		// 1. Core Glow (Intense)
+		const glow = new THREE.Mesh(new THREE.SphereGeometry(0.4 * powerMultiplier, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
+
+		// 2. Shock Rings (Multiple)
+		const ringGeo = new THREE.RingGeometry(0.2, 0.4, 32);
+		const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
 		const ring1 = new THREE.Mesh(ringGeo, ringMat.clone()); ring1.rotation.x = -Math.PI / 2;
-		const ring2 = new THREE.Mesh(ringGeo, ringMat.clone()); ring2.rotation.x = -Math.PI / 2; ring2.material.color.setHex(0xffc07a);
-		// smoke billboard sederhana (sprite)
+		const ring2 = new THREE.Mesh(ringGeo, ringMat.clone()); ring2.rotation.x = -Math.PI / 2; ring2.material.color.setHex(0xffaa00);
+
+		// 3. Smoke Column
 		const smokeTex = this._getSmokeTexture();
-		const smokeMat = new THREE.SpriteMaterial({ map: smokeTex, color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false });
-		const smoke = new THREE.Sprite(smokeMat); smoke.scale.set(6, 6, 1);
-		// multi-layer smoke puffs for richer effect
-		const extraSmokes = [];
-		for (let si = 0; si < 3; si++) {
-			try {
-				const m = new THREE.SpriteMaterial({ map: smokeTex, color: 0xffffff, transparent: true, opacity: 0.75 - si * 0.18, depthWrite: false });
-				const s = new THREE.Sprite(m); s.scale.set(3 + si * 2.5, 3 + si * 2.5, 1);
-				s.position.copy(center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.2 + si * 0.12, (Math.random() - 0.5) * 0.8)));
-				this.scene.add(s); extraSmokes.push(s);
-				// animate
-				let st = 0; const stTick = () => { if (st > 1.4) { try { this.scene.remove(s); m.dispose(); } catch (_) { } return; } s.material.opacity = (0.75 - si * 0.18) * (1 - (st / 1.4)); s.scale.setScalar(THREE.MathUtils.lerp(3 + si * 2.5, 8 + si * 3.5, st)); s.position.y += 0.003 + si * 0.002; st += 0.04; requestAnimationFrame(stTick); }; stTick();
-			} catch (_) { }
-		}
-		// debris titik (increased, scale with quality)
-		const debrisCount = Math.min(1200, Math.floor(80 * particleQualityScale * Math.max(1, powerMultiplier)));
-		const debris = this._spawnDebris(center, debrisCount);
-		// ember sparks: small bright particles for visual punch (scaled)
-		try { this.spawnHitSparks(center.clone().add(new THREE.Vector3(0, 0.2, 0)), Math.floor(64 * particleQualityScale * Math.max(1, powerMultiplier)), 0xff8a33); } catch (_) { }
-		// flash light (scale by powerMultiplier)
-		const flash = new THREE.PointLight(0xfff1a8, 3.0 * Math.max(1, powerMultiplier), 28 * Math.max(1, powerMultiplier));
-		group.add(glow); group.add(ring1); group.add(ring2); group.add(smoke); group.add(flash);
+		const smokeMat = new THREE.SpriteMaterial({ map: smokeTex, color: 0x222222, transparent: true, opacity: 0.8, depthWrite: false });
+		const smoke = new THREE.Sprite(smokeMat); smoke.scale.set(8, 8, 1);
+
+		// 4. Fireball Sprites
+		const fireMat = new THREE.SpriteMaterial({ map: smokeTex, color: 0xff5500, transparent: true, opacity: 1.0, depthWrite: false, blending: THREE.AdditiveBlending });
+		const fireball = new THREE.Sprite(fireMat); fireball.scale.set(5 * powerMultiplier, 5 * powerMultiplier, 1);
+
+		group.add(glow, ring1, ring2, smoke, fireball);
 		this.scene.add(group);
-		// screen flash halus via overlay
-		this._screenFlash(0.7 * Math.max(1, powerMultiplier), Math.round(200 * Math.max(1, powerMultiplier)));
-		// immediate camera hit to emphasize blast
-		try { this.shake.amp = Math.min(8.0, (this.shake.amp || 0) + 2.4 * Math.min(4, particleQualityScale) * Math.max(1, powerMultiplier)); } catch (_) { }
+
+		// 5. Flash Light
+		const flash = new THREE.PointLight(0xff5500, 8.0 * powerMultiplier, 40 * powerMultiplier);
+		flash.position.copy(center);
+		flash.position.y += 1.0;
+		this.scene.add(flash);
+		setTimeout(() => this.scene.remove(flash), 150);
+
+		// 6. Debris & Sparks
+		const debrisCount = Math.min(150, Math.floor(100 * particleQualityScale * powerMultiplier));
+		const debris = this._spawnDebris(center, debrisCount);
+		// Ember sparks
+		try { this.spawnHitSparks(center.clone().add(new THREE.Vector3(0, 0.5, 0)), Math.floor(120 * powerMultiplier), 0xffaa00); } catch (_) { }
+
+		// Screen Flash
+		this._screenFlash(0.8, 150);
+
+		// Animation Loop
 		let t = 0;
 		const tick = () => {
-			if (t > 1.1) { // cleanup smokes
-				for (const es of extraSmokes) try { this.scene.remove(es); es.material.dispose(); } catch (_) { }
-				this.scene.remove(group); glow.geometry.dispose(); glow.material.dispose(); ring1.geometry.dispose(); ring1.material.dispose(); ring2.geometry.dispose(); smoke.material.dispose(); return;
+			if (t > 1.2) {
+				// Cleanup
+				this.scene.remove(group);
+				glow.geometry.dispose(); glow.material.dispose();
+				ring1.geometry.dispose(); ring1.material.dispose();
+				ring2.geometry.dispose();
+				smoke.material.dispose(); fireMat.dispose();
+				return;
 			}
-			const s = THREE.MathUtils.lerp(0.3, 9.0, t);
-			glow.scale.setScalar(s);
-			ring1.scale.setScalar(THREE.MathUtils.lerp(1, 26, t)); ring1.material.opacity = 0.95 * (1 - t);
-			ring2.scale.setScalar(THREE.MathUtils.lerp(1, 18, Math.min(1, t * 1.4))); ring2.material.opacity = 0.85 * (1 - Math.min(1, t * 1.4));
-			smoke.material.opacity = 0.9 * (1 - Math.min(1, (t - 0.1) * 0.9)); smoke.scale.setScalar(THREE.MathUtils.lerp(4, 16, t));
-			flash.intensity = 2.2 * (1 - t);
-			// spawn additional small debris particles in early frames for thrown look (scaled by quality)
-			if (t < 0.25) {
-				try { const d = this._spawnDebris(center.clone().add(new THREE.Vector3(0, 0.15, 0)), Math.min(Math.floor(160 * particleQualityScale * Math.max(1, powerMultiplier)), 2000)); setTimeout(() => { try { this.scene.remove(d.obj); d.dispose(); } catch (_) { } }, 1200); } catch (_) { }
-				try { this.spawnHitSparks(center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.2, (Math.random() - 0.5) * 0.6)), Math.min(Math.floor(96 * particleQualityScale * Math.max(1, powerMultiplier)), 2000), 0xffc07a); } catch (_) { }
-			}
-			// fade debris velocities sedikit demi realism
-			try { if (debris && debris.obj && debris.dispose && debris.obj.geometry) { const pos = debris.obj.geometry.attributes.position.array; for (let i = 0; i < (debris.count || 0); i++) { pos[i * 3 + 1] += (debris.velocities ? debris.velocities[i].vy * 0.016 : 0); } debris.obj.geometry.attributes.position.needsUpdate = true; } } catch (_) { }
-			t += 0.05;
+
+			const easeOut = 1 - Math.pow(1 - t, 3);
+
+			glow.scale.setScalar(0.1 + easeOut * 4.0);
+			glow.material.opacity = 1 - t;
+
+			ring1.scale.setScalar(1 + easeOut * 35.0); ring1.material.opacity = 0.8 * (1 - t);
+			ring2.scale.setScalar(1 + easeOut * 25.0); ring2.material.opacity = 0.6 * (1 - t);
+
+			fireball.scale.setScalar((5 * powerMultiplier) + t * 4); fireball.material.opacity = 1 - Math.pow(t, 0.5);
+			smoke.scale.setScalar(8 + t * 15); smoke.material.opacity = 0.8 * (1 - t);
+			smoke.position.y += 0.1;
+
+			t += 0.04;
 			requestAnimationFrame(tick);
 		};
 		tick();
-		// cleanup debris
-		setTimeout(() => { try { this.scene.remove(debris.obj); debris.dispose(); } catch (_) { } }, 1600);
+
+		setTimeout(() => { try { this.scene.remove(debris.obj); debris.dispose(); } catch (_) { } }, 2000);
 	}
 
 	_getSmokeTexture() {
@@ -1372,6 +1617,9 @@ export default class Game {
 	}
 
 	_spawnDebris(center, count) {
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(center)) return { obj: null, dispose: () => { } };
+
 		// jika ada pool, gunakan pool untuk menghindari alokasi
 		if (this._debrisPool && this._debrisPool.length > 0) {
 			let entry = this._debrisPool.find(x => !x.busy);
@@ -1472,6 +1720,10 @@ export default class Game {
 	spawnTracer(start, end, color = 0xfff1a8) {
 		// try reuse tracer from pool
 		if (!this._tracerPool) return;
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(start)) return;
+		if (end && !isValidVector3(end)) return;
+
 		let entry = this._tracerPool.find(x => !x.busy);
 		if (!entry) entry = this._tracerPool[0];
 		const line = entry.obj;
@@ -1506,6 +1758,9 @@ export default class Game {
 	// short burst of glow points along tracer to create trail bloom
 	spawnTracerGlow(start, end, color = 0xfff1a8, count = 6) {
 		if (!this._pointsPool) return;
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(start) || !isValidVector3(end)) return;
+
 		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
@@ -1544,8 +1799,49 @@ export default class Game {
 		this.weapon.recoilZ += 0.02;
 	}
 
+	updateWeaponSwitch(dt) {
+		if (this._switchAnim && this._switchAnim.active) {
+			// Animate
+			this._switchAnim.t += dt * 4.0;
+			if (this._switchAnim.t >= 1) {
+				this._switchAnim.active = false;
+				this.weapon.group.position.y = this.weapon.basePos.y;
+				// Finish switch
+				this.player.weapon = this._switchAnim.next;
+				// Update HUD Weapon Name/Icon
+				try {
+					if (this.hud && typeof this.hud.setWeapon === 'function') {
+						const n = this.player.weapon === 'pistol' ? 'PISTOL' : (this.player.weapon === 'rocket' ? 'ROCKET LAUNCHER' : (this.player.weapon === 'shotgun' ? 'SHOTGUN' : 'ASSAULT RIFLE'));
+						this.hud.setWeapon(n, '');
+					}
+					// Update Ammo Display for new weapon
+					this.markHudDirty();
+				} catch (_) { }
+			} else {
+				// Dip down effect
+				const t = this._switchAnim.t;
+				const yOff = Math.sin(t * Math.PI) * -0.4;
+				this.weapon.group.position.y = this.weapon.basePos.y + yOff;
+			}
+			return;
+		}
+
+		// Input Check
+		let next = null;
+		if (this.input.keys && this.input.keys['1']) next = 'pistol';
+		else if (this.input.keys && this.input.keys['2']) next = 'assault';
+		else if (this.input.keys && this.input.keys['3']) next = 'shotgun';
+		else if (this.input.keys && this.input.keys['4']) next = 'rocket';
+
+		if (next && next !== this.player.weapon) {
+			// Start Switch
+			this._switchAnim = { active: true, t: 0, next: next };
+			try { this.audio.click(); } catch (_) { } // Switch sound
+		}
+	}
+
 	updateWeapon(dt) {
-		if (!this.weapon) return;
+		if (!this.weapon || !this.player || !this.weapon.group) return;
 		this.weapon.recoilX = THREE.MathUtils.damp(this.weapon.recoilX, 0, 10, dt);
 		this.weapon.recoilY = THREE.MathUtils.damp(this.weapon.recoilY, 0, 10, dt);
 		this.weapon.recoilZ = THREE.MathUtils.damp(this.weapon.recoilZ, 0, 14, dt);
@@ -1982,6 +2278,10 @@ export default class Game {
 		}
 	}
 
+	// NOTE: setupEvents() is defined earlier in this class (around line 976)
+	// It handles: resize, canvas click for pointer lock, controls lock/unlock events,
+	// window blur, and visibility change. Pause menu buttons are handled in pages/game.js.
+
 	updateHUD() {
 		try { const impl = this.updateHUD; const proto = Object.getPrototypeOf(this).updateHUD; if (impl && impl !== proto) return impl.call(this); } catch (_) { }
 	}
@@ -2209,6 +2509,10 @@ export default class Game {
 	// spawnBeam: lebih tebal/terang untuk efek laser/energy (reuses tracer pool)
 	spawnBeam(start, end, color = 0xffffff, duration = 0.12) {
 		if (!this._tracerPool) return;
+		// NaN Guard: Prevent "Computed radius is NaN" errors
+		if (!isValidVector3(start)) return;
+		if (end && !isValidVector3(end)) return;
+
 		let entry = this._tracerPool.find(x => !x.busy);
 		if (!entry) entry = this._tracerPool[0];
 		const line = entry.obj;
@@ -2366,6 +2670,10 @@ export default class Game {
 		try {
 			const pts = Number(points) || 0;
 			this.world.score = (this.world.score || 0) + pts;
+			// Track kills for session stats (anti-cheat)
+			if (pts >= 10 && this.sessionManager) {
+				this.sessionManager.recordKill();
+			}
 			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 		} catch (_) { }
 	}

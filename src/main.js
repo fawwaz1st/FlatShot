@@ -1,203 +1,176 @@
-import Game from './game.js';
-// MenuController removed - not using complex controller for simple accordion
+import { GameSession } from './GameSession.js';
+import { MenuSession } from './MenuSession.js';
+import { MENU_HTML, HUD_HTML, PAUSE_HTML } from './ui/layouts.js';
 
-// PWA Service Worker Registration
+// --- STATE MANAGEMENT ---
+const APP_CONTAINER = document.getElementById('canvas-container');
+const UI_LAYER = document.getElementById('ui-layer');
+
+let currentSession = null;
+let currentState = 'NONE'; // NONE, MENU, GAME
+
+// Initialize App
+function initApp() {
+    console.log("App Initializing...");
+    showMenu();
+}
+
+// --- STATE TRANSITIONS ---
+
+async function showMenu() {
+    if (currentState === 'MENU') return;
+    console.log("State: Transitioning to MENU");
+
+    // 1. Cleanup previous state
+    if (currentSession) {
+        currentSession.dispose();
+        currentSession = null;
+    }
+    UI_LAYER.innerHTML = ''; // Clear UI
+
+    // 2. Inject Menu UI
+    UI_LAYER.innerHTML = MENU_HTML;
+    bindMenuEvents();
+
+    // 3. Start Menu Session (3D Background)
+    currentSession = new MenuSession(APP_CONTAINER);
+    currentSession.start();
+
+    currentState = 'MENU';
+}
+
+async function startGame() {
+    if (currentState === 'GAME') return;
+    console.log("State: Transitioning to GAME");
+
+    // 1. Cleanup previous state
+    if (currentSession) {
+        currentSession.dispose();
+        currentSession = null;
+    }
+    UI_LAYER.innerHTML = ''; // Clear UI
+
+    // 2. Inject Game UI (HUD)
+    UI_LAYER.innerHTML = HUD_HTML;
+    // Append Pause Menu (hidden)
+    const pauseDiv = document.createElement('div');
+    pauseDiv.innerHTML = PAUSE_HTML;
+    UI_LAYER.appendChild(pauseDiv.firstElementChild);
+
+    bindGameEvents();
+
+    // 3. Start Game Session
+    currentSession = new GameSession(APP_CONTAINER);
+    currentSession.start();
+
+    currentState = 'GAME';
+}
+
+// --- UI EVENT BINDINGS ---
+
+function bindMenuEvents() {
+    // Accordion Logic
+    const accordionBtns = document.querySelectorAll('.menu-btn');
+    const submenus = document.querySelectorAll('.submenu');
+
+    function closeAllSubmenus() {
+        submenus.forEach(el => {
+            el.classList.remove('open');
+            el.style.maxHeight = '0';
+            el.style.opacity = '0';
+        });
+        accordionBtns.forEach(btn => btn.classList.remove('active'));
+    }
+
+    accordionBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const targetId = btn.getAttribute('data-target');
+            const targetMenu = document.getElementById(targetId);
+
+            if (targetMenu.classList.contains('open')) {
+                closeAllSubmenus();
+                return;
+            }
+            closeAllSubmenus();
+            targetMenu.classList.add('open');
+            targetMenu.style.maxHeight = '500px';
+            targetMenu.style.opacity = '1';
+            btn.classList.add('active');
+
+            // Audio Feedback (Optional, if we have a global audio manager, else skip)
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.accordion-menu')) {
+            closeAllSubmenus();
+        }
+    });
+
+    // Start Buttons
+    const btnQuick = document.getElementById('btn-quickmatch');
+    if (btnQuick) {
+        btnQuick.addEventListener('click', () => {
+            startGame();
+        });
+    }
+
+    // Settings (Volume/Sens) - We can persist these to localStorage in future
+    const volMasterEl = document.getElementById('volMaster');
+    if (volMasterEl) {
+        volMasterEl.addEventListener('input', (e) => {
+            // Store globally or pass to session?
+            // For now, simpler to let session handle it, BUT session changes.
+            // Ideal: Global Config object.
+        });
+    }
+}
+
+function bindGameEvents() {
+    // Resume/Quit are in Pause Menu
+    const resumeBtn = document.getElementById('resumeBtn');
+    const quitBtn = document.getElementById('quitBtn');
+
+    if (resumeBtn) resumeBtn.addEventListener('click', () => {
+        const pm = document.getElementById('pauseMenu');
+        if (pm) pm.classList.add('hidden');
+        if (currentSession && currentSession.game) {
+            currentSession.game.isPaused = false;
+            // Lock pointer again
+            document.body.requestPointerLock();
+        }
+    });
+
+    if (quitBtn) quitBtn.addEventListener('click', () => {
+        showMenu();
+    });
+
+    // Handle ESC key for Pause
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Escape' && currentState === 'GAME') {
+            const pm = document.getElementById('pauseMenu');
+            if (pm) {
+                const isHidden = pm.classList.contains('hidden');
+                if (isHidden) {
+                    pm.classList.remove('hidden');
+                    if (currentSession && currentSession.game) currentSession.game.isPaused = true;
+                    document.exitPointerLock();
+                } else {
+                    resumeBtn.click();
+                }
+            }
+        }
+    });
+}
+
+// --- BOOT ---
+// Register SW
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js')
-            .then(reg => console.log('SW registered', reg.scope))
-            .catch(err => console.log('SW failed', err));
+        navigator.serviceWorker.register('./service-worker.js').catch(() => { });
     });
 }
 
-// Global Elements
-const menuEl = document.getElementById('flatshot-ui');
-const hudEl = document.getElementById('hud');
-const crosshairEl = document.getElementById('crosshair');
-// Legacy overlay for gameover, skill select, etc.
-const gameoverEl = document.getElementById('gameover');
-const countdownEl = document.getElementById('countdown');
-const countTextEl = document.getElementById('countText');
-const skillSelectEl = document.getElementById('skillSelect');
-const skillGridEl = document.getElementById('skillGrid');
-const leaderboardEl = document.getElementById('leaderboard');
-const transEl = document.getElementById('transition'); // Assuming this still exists or can be ignored
-
-let game = new Game();
-// Start Menu Scene (AI Attract Mode)
-try { game.enterMenuLoop(); } catch (_) { console.error('Failed to enter menu loop:', _); }
-
-
-// --- ACCORDION LOGIC ---
-const accordionBtns = document.querySelectorAll('.menu-btn');
-const submenus = document.querySelectorAll('.submenu');
-
-function closeAllSubmenus() {
-    submenus.forEach(el => {
-        el.classList.remove('open');
-        el.style.maxHeight = '0';
-        el.style.opacity = '0';
-    });
-    accordionBtns.forEach(btn => btn.classList.remove('active'));
-}
-
-accordionBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const targetId = btn.getAttribute('data-target');
-        const targetMenu = document.getElementById(targetId);
-
-        // If clicking already open, just close it
-        if (targetMenu.classList.contains('open')) {
-            closeAllSubmenus();
-            return;
-        }
-
-        // Close others
-        closeAllSubmenus();
-
-        // Open target
-        targetMenu.classList.add('open');
-        targetMenu.style.maxHeight = '500px';
-        targetMenu.style.opacity = '1';
-        btn.classList.add('active');
-
-        try { game.audio.menuClick(); } catch (_) { }
-    });
-});
-
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.accordion-menu')) {
-        closeAllSubmenus();
-    }
-});
-
-// --- SUBMENU ACTIONS ---
-const btnQuick = document.getElementById('btn-quickmatch');
-if (btnQuick) {
-    btnQuick.addEventListener('click', () => {
-        try { game.audio.menuClick(); } catch (_) { }
-        startGameFlow();
-    });
-}
-
-// --- SETTINGS BINDINGS ---
-const volMasterEl = document.getElementById('volMaster');
-const sensitivityEl = document.getElementById('sensitivity');
-
-if (volMasterEl) {
-    volMasterEl.addEventListener('input', (e) => {
-        try { game.audio.setMasterVolume(parseFloat(e.target.value)); } catch (_) { }
-    });
-}
-if (sensitivityEl) {
-    sensitivityEl.addEventListener('input', (e) => {
-        try { game.setSensitivity(parseFloat(e.target.value)); } catch (_) { }
-    });
-}
-
-// --- GAME FLOW HELPERS ---
-
-// Audio Unlocker
-let audioUnlocked = false;
-function tryUnlockAudio() {
-    if (audioUnlocked) return;
-    try {
-        if (game && game.audio && typeof game.audio.ensureCtx === 'function') game.audio.ensureCtx();
-        audioUnlocked = true;
-    } catch (_) { }
-}
-document.body.addEventListener('click', tryUnlockAudio, { once: true });
-
-async function startGameFlow() {
-    // Fade out menu
-    if (menuEl) menuEl.style.display = 'none'; // simple hide
-    if (hudEl) hudEl.classList.remove('hidden');
-
-    // Stop Menu BGM
-    try { game.audio.stopBgm(true); } catch (_) { }
-
-    // Start Voting Phase
-    try {
-        game.enterVoting();
-    } catch (e) {
-        console.error(e);
-        // Fallback to direct start if voting fails
-        game.enterGame('TDM');
-    }
-}
-
-
-// --- SKILL SELECTION (Reused logic) ---
-const S_SKILLS = [
-    { key: 'overcharge', name: 'Overcharge', desc: '+50% damage.' },
-    { key: 'aegis', name: 'Aegis', desc: '+50 Shield.' },
-    { key: 'adrenal', name: 'Adrenal', desc: '+Speed & Fire Rate.' },
-    { key: 'quickdraw', name: 'Quickdraw', desc: 'Fast Reload.' },
-    { key: 'vigor', name: 'Vigor', desc: '+25 Max HP.' },
-    { key: 'demolisher', name: 'Demolisher', desc: 'Better Grenades.' },
-];
-
-function buildCardEl(skill) {
-    const div = document.createElement('div');
-    div.className = 'skill-card';
-    div.innerHTML = `<h3>${skill.name}</h3><p>${skill.desc}</p>`;
-    div.addEventListener('click', () => {
-        if (_resolveSkillPick) {
-            skillSelectEl.classList.add('hidden');
-            _resolveSkillPick(skill);
-            _resolveSkillPick = null;
-        }
-    });
-    return div;
-}
-
-let _resolveSkillPick = null;
-function presentSkillSelection() {
-    return new Promise((resolve) => {
-        _resolveSkillPick = resolve;
-        if (!skillSelectEl) { resolve(null); return; }
-
-        skillSelectEl.classList.remove('hidden');
-        skillGridEl.innerHTML = '';
-
-        // Pick 3 random
-        const pool = [...S_SKILLS];
-        for (let i = 0; i < 3; i++) {
-            if (pool.length === 0) break;
-            const idx = Math.floor(Math.random() * pool.length);
-            skillGridEl.appendChild(buildCardEl(pool.splice(idx, 1)[0]));
-        }
-    });
-}
-
-function runCountdown() {
-    return new Promise((resolve) => {
-        if (!countdownEl) { resolve(); return; }
-        let n = 3;
-        countTextEl.innerText = n;
-        countdownEl.classList.remove('hidden');
-
-        const timer = setInterval(() => {
-            n--;
-            if (n <= 0) {
-                clearInterval(timer);
-                countdownEl.classList.add('hidden');
-                resolve();
-            } else {
-                countTextEl.innerText = n;
-            }
-        }, 1000);
-    });
-}
-
-// --- EVENT LISTENERS ---
-window.addEventListener('keydown', (e) => {
-    if (e.code === 'Escape') {
-        // Toggle menu/pause
-        if (game && game.currentSceneMode === 'game') {
-            // We simplified, just reload for now to go back to menu since we removed complex pause UI
-            window.location.reload();
-        }
-    }
-});
+// Start
+initApp();

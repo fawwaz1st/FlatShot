@@ -32,71 +32,14 @@
 </head>
 
 <body>
-	<!-- Canvas Layer (Background) -->
+	<!-- Canvas Layer (Background / Live Preview) -->
 	<div id="canvas-container"></div>
 
-	<!-- Minimalist Accordion Menu -->
-	<div id="flatshot-ui">
-		<header class="game-header">
-			<h1>FLATSHOT</h1>
-			<p>BROWSER ARENA FPS</p>
-		</header>
+	<!-- UI Layer (Injected Dynamically) -->
+	<div id="ui-layer"></div>
 
-		<nav class="accordion-menu">
-			<!-- ITEM 1: MULAI -->
-			<div class="menu-item">
-				<button class="menu-btn" data-target="submenu-play">MULAI</button>
-				<div id="submenu-play" class="submenu">
-					<div class="submenu-inner">
-						<button id="btn-quickmatch" class="sub-btn">SINGLE PLAYER</button>
-						<button id="btn-server" class="sub-btn">SERVER BROWSER</button>
-					</div>
-				</div>
-			</div>
-
-			<!-- ITEM 2: PENGATURAN -->
-			<div class="menu-item">
-				<button class="menu-btn" data-target="submenu-settings">PENGATURAN</button>
-				<div id="submenu-settings" class="submenu">
-					<div class="submenu-inner">
-						<div class="control-group">
-							<label>MASTER VOLUME</label>
-							<input type="range" id="volMaster" min="0" max="1" step="0.1" value="0.5">
-						</div>
-						<div class="control-group">
-							<label>SENSITIVITY</label>
-							<input type="range" id="sensitivity" min="0.1" max="2.0" step="0.1" value="0.8">
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<!-- ITEM 3: TENTANG -->
-			<div class="menu-item">
-				<button class="menu-btn" data-target="submenu-about">TENTANG</button>
-				<div id="submenu-about" class="submenu">
-					<div class="submenu-inner">
-						<p class="about-text">
-							FlatShot adalah eksperimen FPS berbasis WebGL.<br>
-							Tanpa download. Tanpa install.<br>
-							Dibuat dengan <strong>Three.js</strong>.
-						</p>
-					</div>
-				</div>
-			</div>
-		</nav>
-	</div>
-
-	<!-- HUD Layer (Hidden in Menu) -->
-	<div id="hud" class="hud hidden">
-		<div class="crosshair" id="crosshair"></div>
-		<div class="hud-stats">
-			<div class="stat-box">HP <span id="hp">100</span></div>
-			<div class="stat-box">AMMO <span id="ammo">30</span></div>
-		</div>
-	</div>
-
-	<script type="module" src="./src/main.js"></script>
+	<!-- App Entry Point (Replaces main.js for MPA Menu) -->
+	<script type="module" src="./src/pages/menu.js"></script>
 </body>
 
 </html>

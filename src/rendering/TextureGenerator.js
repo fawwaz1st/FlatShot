@@ -1,28 +1,47 @@
 import * as THREE from 'three';
 
-export class TextureGen {
-    static createGrid(width, height, color1, color2, thickness = 2) {
+/**
+ * TextureGenerator - Modern texture generation utilities
+ * Cleaner API and better organization
+ */
+export class TextureGenerator {
+    /**
+     * Create a grid texture
+     * @param {number} width - Canvas width
+     * @param {number} height - Canvas height  
+     * @param {string|number} primaryColor - Primary grid line color
+     * @param {string|number} backgroundColor - Background color
+     * @param {number} thickness - Line thickness
+     */
+    static createGrid(width, height, primaryColor, backgroundColor, thickness = 2) {
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
 
-        // Background (Dark)
-        ctx.fillStyle = '#0a0a10'; // Dark almost black
+        // Convert hex numbers to strings if needed
+        const bgColor = typeof backgroundColor === 'number'
+            ? `#${backgroundColor.toString(16).padStart(6, '0')}`
+            : backgroundColor;
+        const lineColor = typeof primaryColor === 'number'
+            ? `#${primaryColor.toString(16).padStart(6, '0')}`
+            : primaryColor;
+
+        // Background
+        ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, width, height);
 
         // Glow effect
         ctx.shadowBlur = 8;
-        ctx.shadowColor = color1;
-        ctx.strokeStyle = color1;
+        ctx.shadowColor = lineColor;
+        ctx.strokeStyle = lineColor;
         ctx.lineWidth = thickness;
 
-        // Grid Lines
+        // Grid Lines - border
         ctx.beginPath();
-        // border
         ctx.strokeRect(0, 0, width, height);
 
-        // internal pattern (cross)
+        // Cross pattern
         ctx.moveTo(width / 2, 0);
         ctx.lineTo(width / 2, height);
         ctx.moveTo(0, height / 2);
@@ -31,7 +50,6 @@ export class TextureGen {
 
         // Secondary subtle lines
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = color2;
         ctx.lineWidth = 1;
         ctx.globalAlpha = 0.3;
         ctx.beginPath();
@@ -40,6 +58,7 @@ export class TextureGen {
         ctx.moveTo(0, height / 4); ctx.lineTo(width, height / 4);
         ctx.moveTo(0, height * 0.75); ctx.lineTo(width, height * 0.75);
         ctx.stroke();
+        ctx.globalAlpha = 1.0;
 
         const tex = new THREE.CanvasTexture(canvas);
         tex.wrapS = THREE.RepeatWrapping;
@@ -48,6 +67,9 @@ export class TextureGen {
         return tex;
     }
 
+    /**
+     * Create noise texture
+     */
     static createNoise(width, height, opacity = 0.1) {
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -70,4 +92,29 @@ export class TextureGen {
         tex.wrapT = THREE.RepeatWrapping;
         return tex;
     }
+
+    /**
+     * Create solid color texture
+     */
+    static createSolid(width, height, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        const fillColor = typeof color === 'number'
+            ? `#${color.toString(16).padStart(6, '0')}`
+            : color;
+
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(0, 0, width, height);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+    }
 }
+
+// Alias for backward compatibility
+export const TextureGen = TextureGenerator;

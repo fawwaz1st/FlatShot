@@ -14,9 +14,13 @@ export class SpatialHash {
     }
 
     _getKeysForObject(obj) {
-        // Assume obj has mesh.position and radius or half-size
+        // Safety Check
+        if (!obj || !obj.mesh || !obj.mesh.position) return [];
+
         const pos = obj.mesh.position;
-        const radius = (obj.half ? Math.max(obj.half.x, obj.half.z) : (obj.radius || 1)) + 0.5;
+        // Ensure radius is valid
+        const rVal = (obj.half ? Math.max(obj.half.x, obj.half.z) : (obj.radius || 1));
+        const radius = (Number.isFinite(rVal) ? rVal : 1) + 0.5;
 
         const startX = Math.floor((pos.x - radius) / this.cellSize);
         const endX = Math.floor((pos.x + radius) / this.cellSize);

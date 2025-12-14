@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="id">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>FLATSHOT - Game</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Performance & Security -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+
+    <!-- Three.js -->
+    <script type="importmap">{
+		"imports": {
+			"three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+			"three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+		}
+	}</script>
+
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+
+        /* LOADING OVERLAY */
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(135deg, #050510 0%, #0a0a20 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            font-family: 'Rajdhani', sans-serif;
+            transition: opacity 0.5s ease-out;
+        }
+
+        #loading-overlay.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #loading-overlay h1 {
+            font-size: 2.5rem;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            margin-bottom: 2rem;
+            text-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+        }
+
+        .loading-bar-container {
+            width: 320px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #00ffff, #00ff88);
+            box-shadow: 0 0 20px #00ffff;
+            transition: width 0.3s ease-out;
+        }
+
+        #loading-status {
+            margin-top: 1.5rem;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* COUNTDOWN OVERLAY */
+        #countdown-overlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9998;
+            font-family: 'Rajdhani', sans-serif;
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        #countdown-overlay.show {
+            display: flex;
+        }
+
+        #countdown-text {
+            font-size: 15rem;
+            font-weight: 800;
+            color: #fff;
+            text-shadow: 0 0 60px #00ffff, 0 0 120px #00ffff;
+            animation: pulse 0.5s ease-in-out;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1.5);
+                opacity: 0;
+            }
+
+            50% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.95);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- LOADING OVERLAY (Visible by Default) -->
+    <div id="loading-overlay">
+        <h1>Initializing Battlefield...</h1>
+        <div class="loading-bar-container">
+            <div id="loading-bar"></div>
+        </div>
+        <p id="loading-status">Connecting systems...</p>
+    </div>
+
+    <!-- COUNTDOWN OVERLAY (Hidden by Default) -->
+    <div id="countdown-overlay">
+        <span id="countdown-text">3</span>
+    </div>
+
+    <!-- Canvas Layer (Background) -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Layer (Injected Dynamically) -->
+    <div id="ui-layer"></div>
+
+    <!-- App Entry Point -->
+    <script type="module" src="./src/pages/game.js"></script>
+</body>
+
+</html>

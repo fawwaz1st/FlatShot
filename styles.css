@@ -204,7 +204,7 @@ input[type=range] {
 	font-style: normal;
 }
 
-/* --- HUD --- */
+/* --- HUD (CYBERPUNK STYLE) --- */
 .hud {
 	position: absolute;
 	pointer-events: none;
@@ -212,44 +212,146 @@ input[type=range] {
 	height: 100%;
 	top: 0;
 	left: 0;
+	padding: 40px;
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-end;
+	font-family: 'Rajdhani', sans-serif;
 }
 
 .hud.hidden {
 	display: none;
 }
 
+.hud-panel {
+	background: rgba(0, 0, 0, 0.6);
+	border: 1px solid rgba(0, 240, 255, 0.3);
+	padding: 20px;
+	border-radius: 4px;
+	position: relative;
+	backdrop-filter: blur(4px);
+	transform: skewX(-15deg);
+	box-shadow: 0 0 10px rgba(0, 240, 255, 0.1);
+	min-width: 280px;
+}
+
+/* Compensate text skew */
+.hud-panel>* {
+	transform: skewX(15deg);
+}
+
+.hud-left {
+	border-left: 4px solid #00f0ff;
+}
+
+.hud-right {
+	border-right: 4px solid #ff0055;
+	text-align: right;
+}
+
+/* Bars */
+.bar-container {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 8px;
+}
+
+.bar-label {
+	font-weight: 800;
+	color: #fff;
+	width: 30px;
+	font-size: 1.2rem;
+}
+
+.hp-bar-bg,
+.armor-bar-bg {
+	flex-grow: 1;
+	height: 12px;
+	background: rgba(255, 255, 255, 0.1);
+	position: relative;
+	overflow: hidden;
+}
+
+.hp-bar-fill {
+	height: 100%;
+	background: linear-gradient(90deg, #ff0000, #ffaa00);
+	width: 100%;
+	transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.armor-bar-fill {
+	height: 100%;
+	background: #00f0ff;
+	width: 0%;
+	/* Default */
+	transition: width 0.2s;
+}
+
+.hp-text {
+	font-size: 1.5rem;
+	font-weight: 800;
+	color: #fff;
+	min-width: 40px;
+	text-align: right;
+}
+
+/* Ammo */
+.ammo-box {
+	display: flex;
+	align-items: baseline;
+	justify-content: flex-end;
+	gap: 5px;
+}
+
+.ammo-count {
+	font-size: 4rem;
+	font-weight: 800;
+	color: #fff;
+	line-height: 1;
+	text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+
+.ammo-reserve {
+	font-size: 1.5rem;
+	color: #aaa;
+	font-weight: 600;
+}
+
+.weapon-name {
+	color: #00f0ff;
+	font-size: 1rem;
+	letter-spacing: 2px;
+	margin-top: -5px;
+	text-transform: uppercase;
+}
+
+/* Crosshair */
 .crosshair {
 	position: absolute;
 	top: 50%;
 	left: 50%;
-	width: 4px;
-	height: 4px;
+	width: 6px;
+	height: 6px;
 	background: #00f0ff;
 	border-radius: 50%;
 	box-shadow: 0 0 4px #00f0ff;
 	transform: translate(-50%, -50%);
+	z-index: 10;
 }
 
-.hud-stats {
+.hud-top {
 	position: absolute;
-	bottom: 40px;
-	left: 40px;
-	display: flex;
-	gap: 40px;
+	top: 30px;
+	left: 50%;
+	transform: translateX(-50%);
 }
 
-.stat-box {
-	font-size: 2.5rem;
+.score-text {
+	font-size: 2rem;
 	font-weight: 800;
 	color: #fff;
-	text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
-	display: flex;
-	align-items: baseline;
-	gap: 10px;
-}
-
-.stat-box span {
-	color: var(--c-neon);
+	text-shadow: 0 0 10px #00f0ff;
 }
 
 /* --- NEW: VOTING UI & COUNTDOWN --- */
@@ -362,4 +464,107 @@ input[type=range] {
 	.submenu.open {
 		max-height: 500px;
 	}
+}
+
+/* --- UTILITY --- */
+.hidden {
+	display: none !important;
+}
+
+/* --- PAUSE MENU (CYBERPUNK) --- */
+.pause-menu {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.85);
+	backdrop-filter: blur(8px);
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	z-index: 2000;
+	font-family: 'Rajdhani', sans-serif;
+	opacity: 1;
+	transition: opacity 0.3s;
+}
+
+.pause-menu.hidden {
+	opacity: 0;
+	pointer-events: none;
+	display: none !important;
+	/* Force hide */
+}
+
+.pause-container {
+	border: 1px solid #00f0ff;
+	background: rgba(0, 20, 40, 0.95);
+	padding: 40px 80px;
+	transform: skewX(-10deg);
+	box-shadow: 0 0 30px rgba(0, 240, 255, 0.2);
+	text-align: center;
+	position: relative;
+	min-width: 400px;
+}
+
+.pause-container::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 4px;
+	background: #00f0ff;
+	box-shadow: 0 0 10px #00f0ff;
+}
+
+.pause-title {
+	font-size: 4rem;
+	margin: 0 0 30px 0;
+	color: #fff;
+	text-shadow: 0 0 20px #00f0ff;
+	transform: skewX(10deg);
+}
+
+.pause-buttons {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+	transform: skewX(10deg);
+	align-items: center;
+}
+
+/* Pause Button (Decoupled from menu-btn) */
+.pause-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	text-align: center;
+	font-family: 'Rajdhani', sans-serif;
+	font-size: 2rem;
+	font-weight: 700;
+	color: rgba(255, 255, 255, 0.6);
+	transition: all 0.3s ease;
+	padding: 10px 20px;
+	text-transform: uppercase;
+	width: 100%;
+}
+
+.pause-btn:hover {
+	color: #fff;
+	text-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+	transform: scale(1.05);
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.pause-btn.danger {
+	color: #ff0055;
+	border: 1px solid transparent;
+}
+
+.pause-btn.danger:hover {
+	background: rgba(255, 0, 85, 0.1);
+	color: #ff2266;
+	border-color: #ff0055;
+	box-shadow: 0 0 15px rgba(255, 0, 85, 0.2);
 }

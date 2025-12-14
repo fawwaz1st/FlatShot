@@ -41,33 +41,61 @@ export class Enemy {
 	}
 
 	createMesh() {
+		// UNIFIED VISUALS (Match MenuBot)
 		const group = new THREE.Group();
-		// High-detail
-		const high = new THREE.Mesh(SharedGeo.capsule, SharedMat.body);
-		high.castShadow = false;
-		group.add(high);
-		// Low-detail
-		const low = new THREE.Mesh(SharedGeo.box, SharedMat.proxy);
-		low.visible = false;
-		group.add(low);
-		// Eye
-		const eye = new THREE.Mesh(SharedGeo.eye, SharedMat.eye);
-		eye.position.set(0, 0.5, 0.35);
-		group.add(eye);
+		const role = (Math.random() < 0.3) ? 'SNIPER' : ((Math.random() < 0.5) ? 'ASSAULT' : 'FLANKER');
+		this.role = role;
+		const color = (Math.random() < 0.5) ? 0x00f0ff : 0xff3366; // Random team or assigned later?
+		// Note: Enemy typically has fixed team/color in game mode? 
+		// For now default to Red-ish for enemy if not specified, 
+		// IF 'team' is passed in activate, we should update color there.
+		// For createMesh, we build geometry. 
 
-		group.userData._high = high; group.userData._low = low;
+		const bodyH = role === 'SNIPER' ? 1.0 : (role === 'ASSAULT' ? 1.3 : 1.2);
+		const bodyW = role === 'ASSAULT' ? 0.7 : 0.6;
+
+		// 1. Body
+		const body = new THREE.Mesh(
+			new THREE.CapsuleGeometry(bodyW * 0.5, bodyH, 4, 8),
+			new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.4, metalness: 0.6 })
+		);
+		body.position.y = bodyH * 0.8;
+		group.add(body);
+		group.userData._body = body; // ref for color update
+
+		// 2. Armor
+		const vest = new THREE.Mesh(
+			new THREE.BoxGeometry(bodyW * 1.1, bodyH * 0.5, bodyW * 1.1),
+			new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 })
+		);
+		vest.position.y = 0.2;
+		body.add(vest);
+
+		// 3. Eye
+		const eye = new THREE.Mesh(
+			new THREE.BoxGeometry(bodyW * 0.8, 0.2, 0.3),
+			new THREE.MeshBasicMaterial({ color: 0xffffff })
+		);
+		eye.position.set(0, bodyH * 0.3, bodyW * 0.4);
+		body.add(eye);
+
+		// 4. Weapon (Simplified)
+		const weapon = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.6), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+		weapon.position.set(0.4, 0, 0.5);
+		body.add(weapon);
 
 		// Marker
 		try {
 			const markerMat = new THREE.SpriteMaterial({ color: 0xff6b6b, depthTest: false, depthWrite: false });
 			const marker = new THREE.Sprite(markerMat);
 			marker.scale.set(0.6, 0.6, 0.6);
-			marker.position.set(0, 1.8, 0);
+			marker.position.set(0, 2.2, 0);
 			marker.renderOrder = 9999;
 			marker.material.opacity = 0.95;
 			group.add(marker);
 			group.userData._marker = marker;
 		} catch (_) { }
+
 		return group;
 	}
 
@@ -76,249 +104,77 @@ export class Enemy {
 		this._dead = false;
 		this.mesh.visible = true;
 		this.mesh.position.copy(position);
-		this.mesh.position.y = 1;
+		this.mesh.position.y = 0;
 
-		// Reset stats based on config
 		const conf = GameConfig.enemy || {};
-		this.health = (conf.baseHealth || 80) * difficultyMultiplier;
-		this.speed = ((conf.baseSpeed || 2.6) + Math.random()) * (1.0 + (difficultyMultiplier - 1) * 0.1);
-		this.radius = 0.5;
-		this.baseShootCooldown = 0.7 + Math.random() * 0.5;
-		this.shootCooldown = this.baseShootCooldown;
-		this.lastShoot = 0;
+		this.health = (conf.baseHealth || 100) * difficultyMultiplier;
+		this.speed = 4.0;
+		this.state = 'IDLE';
 
-		this.state = 'hunt';
-		this.lastSeenPos = this.mesh.position.clone();
-		this.evadeTimer = 0;
-		this.strafeDir = (Math.random() < 0.5 ? -1 : 1);
-		this.strafeTimer = 0;
-		this._lastHasLOS = false;
-		this.nextThink = 0.0;
-		this._thinkIntervalBase = 0.12;
-	}
+		// AI Stats
+		this.reactionTimer = 0.5; // Delay before shooting
+		this.hasSeenPlayer = false;
 
-	disable() {
-		this.active = false;
-		this._dead = true;
-		this.mesh.visible = false;
-		this.mesh.position.set(0, -100, 0); // Hide far away
-	}
-
-	applyDamage(amount) {
-		if (this._dead || !this.active) return false;
-		this.health -= amount;
-		if (this.health <= 0) {
-			this._dead = true;
-			return true;
-		}
-		return false;
-	}
-
-	_hasLineOfSight(targetPos, obstacles, obstacleMeshesCached) {
-		const from = this.mesh.position.clone();
-		from.y += 0.6;
-		const dir = targetPos.clone().sub(from);
-		const dist = dir.length();
-		dir.normalize();
-		this._ray.set(from, dir);
-		this._ray.far = dist;
-		// use cached collision meshes
-		const blockers = obstacleMeshesCached || obstacles.map(o => o.mesh);
-		const hits = this._ray.intersectObjects(blockers, true);
-		return hits.length === 0;
+		// Update Color check (if needed) based on game state
+		// ...
 	}
 
 	update(dt, playerPos, obstacles, obstacleMeshes, opts = {}) {
 		if (this._dead) return { contact: false, shoot: false, acc: 0 };
 
-		// Config/Opts
-		const { grenades = [], skill = 1.0, playerMoving = false, difficultyMultiplier = 1.0, spatialHash, playerVelocity } = opts;
-
-		// 1. Perception & Prediction (Leading Shot)
-		// Assume bullet speed ~ 100 or immediate? If hitscan, leading is weird, but we simulate 'tracking'.
-		// Let's assume a virtual delay for realism.
 		const distToPlayer = this.mesh.position.distanceTo(playerPos);
-		const leadTime = distToPlayer / 60; // arbitrary speed
-		const predictedPos = playerPos.clone();
-		if (playerVelocity) {
-			predictedPos.add(playerVelocity.clone().multiplyScalar(leadTime));
-		}
+		const hasLOS = this._hasLineOfSight(playerPos, obstacles, obstacleMeshes);
 
-		// Use spatial hash if available
-		const collisionCandidates = (spatialHash) ? spatialHash.query(this.mesh.position, 4.0) : obstacles;
-
-		// 2. State Decision (Behavior Tree Lite)
-		// States: 'hunt', 'cover', 'flank', 'evade'
-
-		// Check health for Cover
-		if (this.health < 30 && distToPlayer < 20) {
-			this.state = 'cover';
-		} else if (distToPlayer < 8 && this.state !== 'cover') {
-			this.state = 'evade'; // Too close
-		} else if (distToPlayer > 15 && this._hasLineOfSight(playerPos, obstacles, obstacleMeshes)) {
-			// Occasionally flank
-			if (Math.random() < 0.01) this.state = 'flank';
-			else if (this.state !== 'flank') this.state = 'hunt';
-		} else {
-			if (this.state === 'evade' && distToPlayer > 12) this.state = 'hunt'; // Reset evade
-		}
-
-		// Collision
-		const nextPos = this.mesh.position.clone().add(this.velocity.clone().multiplyScalar(dt));
-
-		// Simple collision against obstacles
-		for (const o of collisionCandidates) {
-			if (o.type === 'road') continue;
-			const dx = Math.abs(nextPos.x - o.mesh.position.x) - o.half.x - 0.4;
-			const dz = Math.abs(nextPos.z - o.mesh.position.z) - o.half.z - 0.4;
-			if (dx < 0 && dz < 0) {
-				if (dx > dz) nextPos.x -= (nextPos.x > o.mesh.position.x ? dx : -dx);
-				else nextPos.z -= (nextPos.z > o.mesh.position.z ? dz : -dz);
+		// --- AI STATE MACHINE ---
+		if (this.state === 'IDLE') {
+			if (distToPlayer < 30 && hasLOS) {
+				this.state = 'CHASE';
+				this.reactionTimer = 0.4 + Math.random() * 0.3; // Reset reaction on first sight
 			}
 		}
-		this.mesh.position.copy(nextPos);
-
-		// Movement Logic based on State
-		const moveDir = new THREE.Vector3();
-
-		if (this.state === 'cover') {
-			// Find Cover (Object between me and player)
-			// Or rather, Object where Player - Object - Me
-			// Simplest: Find nearest obstacle, hide behind it relative to player
-			let bestCover = null;
-			let bestDist = Infinity;
-
-			for (const o of collisionCandidates) {
-				if (o.type === 'road' || o.type === 'floor') continue;
-				const d = this.mesh.position.distanceTo(o.mesh.position);
-				if (d < bestDist && d > 2) { // Don't pick one I'm standing IN 
-					const dirToCover = o.mesh.position.clone().sub(playerPos).normalize();
-					const coverPos = o.mesh.position.clone().add(dirToCover.multiplyScalar(o.half.x + 1.5)); // Crude
-					// Check if coverPos is reachable/safe? 
-					bestDist = d;
-					bestCover = coverPos;
+		else if (this.state === 'CHASE') {
+			if (!hasLOS) {
+				// Lost sight, move to last known? For now just IDLE after delay
+				if (Math.random() < 0.01) this.state = 'IDLE';
+			} else {
+				// Move logic
+				if (distToPlayer > 10) {
+					// Move towards
+					const dir = new THREE.Vector3().subVectors(playerPos, this.mesh.position).normalize();
+					this.mesh.position.add(dir.multiplyScalar(this.speed * dt));
+					this.mesh.lookAt(playerPos.x, this.mesh.position.y, playerPos.z);
+				} else {
+					// Strafe?
+					this.state = 'ATTACK';
 				}
 			}
-
-			if (bestCover) {
-				moveDir.copy(bestCover.sub(this.mesh.position)).normalize();
-			} else {
-				// Panic, run away
-				moveDir.copy(this.mesh.position.clone().sub(playerPos).normalize());
-			}
 		}
-		else if (this.state === 'flank') {
-			// Move perpendicular
-			const toP = playerPos.clone().sub(this.mesh.position).normalize();
-			moveDir.set(-toP.z, 0, toP.x); // Right
-			if (this.strafeDir < 0) moveDir.negate();
-			// Add slight forward
-			moveDir.add(toP.multiplyScalar(0.3)).normalize();
-		}
-		else if (this.state === 'evade') {
-			// Run away
-			moveDir.copy(this.mesh.position.clone().sub(playerPos).normalize());
-		}
-		else {
-			// Hunt / Default
-			moveDir.copy(predictedPos.clone().sub(this.mesh.position).normalize());
-			// Stop if too close (maintain engagement distance)
-			if (distToPlayer < 10) moveDir.multiplyScalar(0.0); // Stand ground/strafe
+		else if (this.state === 'ATTACK') {
+			this.mesh.lookAt(playerPos.x, this.mesh.position.y, playerPos.z);
+			if (distToPlayer > 15) this.state = 'CHASE';
 		}
 
-		// Apply obstacle avoidance (Steering)
-		const avoid = new THREE.Vector3();
-		let neighborCount = 0;
-		for (const o of collisionCandidates) {
-			const d = this.mesh.position.distanceTo(o.mesh.position);
-			const safeR = Math.max(o.half.x, o.half.z) + 0.8;
-			if (d < safeR) {
-				const push = this.mesh.position.clone().sub(o.mesh.position).normalize();
-				avoid.add(push);
-				neighborCount++;
-			}
-		}
-		if (neighborCount > 0) moveDir.add(avoid.normalize().multiplyScalar(1.5)).normalize();
-
-		// Apply Movement
-		this.mesh.position.x += moveDir.x * this.speed * dt;
-		this.mesh.position.z += moveDir.z * this.speed * dt;
-
-
-		// Logic Update (Think)
-		this.nextThink -= dt;
-		const thinkInterval = Math.max(0.04, this._thinkIntervalBase / (0.8 + 0.5 * difficultyMultiplier + 0.4 * (skill - 1)));
-		const doHeavyThink = (this.nextThink <= 0);
-		if (doHeavyThink) this.nextThink = thinkInterval;
-
-		let hasLOS = this._lastHasLOS;
-		if (doHeavyThink) {
-			hasLOS = this._hasLineOfSight(playerPos, obstacles, obstacleMeshes);
-			this._lastHasLOS = hasLOS;
-			if (hasLOS) this.lastSeenPos.copy(playerPos);
-		}
-
-		// Strafe Logic (Randomize when hunting)
-		this.strafeTimer -= dt;
-		if (this.strafeTimer <= 0) {
-			this.strafeTimer = 0.5 + Math.random() * 1.5;
-			this.strafeDir *= -1;
-		}
-		if (this.state === 'hunt' && distToPlayer < 25 && hasLOS) {
-			// Strafe perpendicular
-			const toP = playerPos.clone().sub(this.mesh.position).normalize();
-			const right = new THREE.Vector3(-toP.z, 0, toP.x).multiplyScalar(this.strafeDir);
-			this.mesh.position.add(right.multiplyScalar(this.speed * 0.6 * dt));
-		}
-
-		// Look At Predicted Position (Smart Aim)
-		this.mesh.lookAt(predictedPos);
-
-		// Shooting Logic
-		let didContact = distToPlayer < 1.2;
+		// --- SHOOTING WITH DELAY ---
 		let shoot = false;
-
-		// Accuracy Calculation (Decreases with distance, improved by skill)
-		// Error Margin: 0 = perfect, 1 = terrible
-		// Base error 0.1, + distance/100, - skill effect
-		const baseAcc = 0.95 + (skill * 0.05); // High skill = better base
-		let acc = baseAcc - (distToPlayer * 0.015) + (difficultyMultiplier * 0.05);
-		acc = THREE.MathUtils.clamp(acc, 0.2, 0.98);
-		if (playerMoving) acc *= 0.9; // Harder to hit moving target
-		if (this.state === 'cover') acc *= 0.5; // Blind firing from cover?
-
-		const now = performance.now() / 1000;
-		this.shootCooldown = Math.max(0.15, this.baseShootCooldown - (skill * 0.1) - (difficultyMultiplier * 0.1));
-
-		if (distToPlayer <= 40 && hasLOS) {
-			if (now - this.lastShoot > this.shootCooldown) {
-				this.lastShoot = now;
-				shoot = true;
-				// Burst variability
-				if (Math.random() < 0.4) this.lastShoot -= 0.1;
+		if (hasLOS) {
+			if (this.reactionTimer > 0) {
+				this.reactionTimer -= dt;
+			} else {
+				// Ready to fire
+				this.shootCooldown = (this.shootCooldown || 0.5) - dt;
+				if (this.shootCooldown <= 0) {
+					shoot = true;
+					this.shootCooldown = 0.6 + Math.random() * 0.4;
+				}
 			}
+		} else {
+			this.reactionTimer = 0.2; // Quick reset if lost sight
 		}
-		// ... (LOD and Marker logic same as before) ...
-		try {
-			const lodDist = 40;
-			const high = this.mesh.userData._high;
-			const low = this.mesh.userData._low;
-			if (high && low) {
-				if (distToPlayer > lodDist) { high.visible = false; low.visible = true; }
-				else { high.visible = true; low.visible = false; }
-			}
-		} catch (_) { }
 
-		try {
-			const m = this.mesh.userData._marker;
-			if (m) {
-				m.visible = true;
-				const s = THREE.MathUtils.clamp(0.6 * (1 + (distToPlayer / 40)), 0.45, 1.3);
-				m.scale.setScalar(s);
-			}
-		} catch (_) { }
+		// Visual Marker Update
+		try { if (this.mesh.userData._marker) this.mesh.userData._marker.visible = (hasLOS && distToPlayer < 40); } catch (_) { }
 
-		return { contact: didContact, shoot, acc };
+		return { contact: (distToPlayer < 1.0), shoot, acc: 0.8 };
 	}
 
 	dispose(scene) {

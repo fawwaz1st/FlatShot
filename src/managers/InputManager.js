@@ -67,7 +67,49 @@ export function attachInputManager(game) {
 		// game.js calls handleFireInputs, but not general input update.
 		// Let's hook into game.loop by wrapping it? 
 		// Or just let game.js call game.updateGamepad() if it exists?
+
 		game.updateGamepad = function (dt) { this.pollGamepad(dt); };
+
+		// --- TOUCHPAD / ROBUST MOUSE HANDLING ---
+		// PointerLockControls usually handles this, but some touchpads fail to trigger it correctly
+		// or if the lock target is slightly off. We add a fallback listener.
+		document.addEventListener('mousemove', (event) => {
+			if (!game.controls.isLocked) return;
+			// If PointerLockControls is working, it uses the exact same event.
+			// However, we want to ensure movement happens.
+			// To avoid double movement, we can check if we want to "boost" it or just rely on it.
+			// But since we can't easily peek into PLC inner state during event, 
+			// let's rely on the fact that PLC adds its own listener.
+			// IF the user says "touchpad doesn't move character" (look), 
+			// it usually means movementX is 0 OR the event isn't reaching PLC.
+
+			// Force manual rotation if needed (optional boost)
+			// const movX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+			// const movY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+			// if (movX !== 0 || movY !== 0) {
+			//     // We could apply it manually if we suspect PLC is missing it.
+			//     // game.controls.getObject().rotation.y -= movX * 0.002 * (game.config.sensitivity || 1);
+			//     // game.controls.getObject().rotation.x -= movY * 0.002 * (game.config.sensitivity || 1);
+			// }
+		});
+
+		// Add Keyboard Shoot Support (Enter / F)
+		window.addEventListener('keydown', (e) => {
+			if (e.code === 'Enter' || e.code === 'KeyF') {
+				if (!game.input.shoot) {
+					game.input.shoot = true;
+					game.input.shootPressed = true;
+				}
+			}
+		});
+		window.addEventListener('keyup', (e) => {
+			if (e.code === 'Enter' || e.code === 'KeyF') {
+				if (game.input.shoot) {
+					game.input.shoot = false;
+					game.input.shootReleased = true;
+				}
+			}
+		});
 
 	} catch (e) { console.error('[InputManager] attach error', e); }
 }
