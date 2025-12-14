@@ -367,18 +367,21 @@ export default class Game {
 	}
 
 	setupLights() {
+		// Clean up existing lights safely
 		if (this._sceneLights) {
-			this._sceneLights.forEach(l => this.scene.remove(l));
+			this._sceneLights.forEach(l => {
+				if (l && l.parent) l.parent.remove(l);
+			});
 		}
 		this._sceneLights = [];
 
-		// Hemisphere Light (Sky Color + Ground Color)
-		const hemi = new THREE.HemisphereLight(0x00f0ff, 0x442222, 0.6);
+		// 1. Hemisphere Light (Sky + Ground) - Always ensures visibility
+		const hemi = new THREE.HemisphereLight(0x444444, 0x222222, 1.0);
 		this.scene.add(hemi);
 		this._sceneLights.push(hemi);
 
-		// Directional Light (Sun/Key Light)
-		this.sun = new THREE.DirectionalLight(0xffffff, 1.2);
+		// 2. Direct Sun Light
+		this.sun = new THREE.DirectionalLight(0xffffff, 1.5);
 		this.sun.position.set(50, 100, 50);
 		this.sun.castShadow = true;
 		this.sun.shadow.mapSize.width = 2048;
@@ -391,6 +394,11 @@ export default class Game {
 		this.sun.shadow.camera.bottom = -100;
 		this.scene.add(this.sun);
 		this._sceneLights.push(this.sun);
+
+		// 3. Ambient fallback
+		const amb = new THREE.AmbientLight(0xffffff, 0.4);
+		this.scene.add(amb);
+		this._sceneLights.push(amb);
 	}
 
 	setupWorld() {
@@ -399,25 +407,9 @@ export default class Game {
 		// 1. Lights
 		this.setupLights();
 
-		// 2. Skybox (Simple Dark Solid Color as requested)
+		// 2. Skybox / Background
 		this.scene.background = new THREE.Color(0x050505);
 		this.scene.fog = new THREE.FogExp2(0x050505, 0.015);
-
-		// 3. Grid Floor (Neon Style)
-		// We use a large plane with a grid shader/texture or simple helper
-		// Using Helper for performance/aesthetic match with 'textureGen' usage in loadGameLevel
-		// But loadGameLevel ALREADY creates a floor?
-		// User said: "Buat lighting... buat Floor Grid... dan Skybox".
-		// If loadGameLevel already creates floor (lines 558-574 in original game.js), maybe setupWorld handles GLOBAL env?
-		// The error was "this.setupWorld is not a function".
-		// So I just need to define it so `initializeGameAssets` doesn't crash.
-		// I will ensure it sets up the "Global" visuals that persist or are defaults.
-
-		// Note: loadGameLevel creates specific level geometry. setupWorld can be for shared assets or pre-warm.
-		// For now, I will just ensure it exists and sets the lighting/skybox as requested.
-		// Lighting is already called in loadGameLevel -> setupLights().
-		// So setupWorld mostly needs to exist to satisfy the call.
-		// But I'll put the "Skybox" logic here.
 	}
 
 	cleanupScene() {
@@ -546,65 +538,97 @@ export default class Game {
 		if (text) text.innerText = msg + ` (${Math.round(percent)}%)`;
 	}
 
-	async startGameSequence(mode) {
+	startGameSequence(mode) {
+		// Reset State
+		this.isPaused = false;
+		if (this.controls) this.controls.unlock();
+
 		// 1. Show Loading Screen
 		if (!document.getElementById('loading-screen')) {
-			const div = document.createElement('div');
-			div.innerHTML = (await import('./ui/layouts.js')).LOADING_SCREEN_HTML; // Dynamic import to avoid cycles/wait
-			document.body.appendChild(div.firstElementChild);
+			(async () => {
+				try {
+					const layouts = await import('./ui/layouts.js');
+					const div = document.createElement('div');
+					div.innerHTML = layouts.LOADING_SCREEN_HTML;
+					document.body.appendChild(div.firstElementChild);
+				} catch (e) { console.warn("Loading screen UI failed", e); }
+			})();
 		}
 
 		console.log("[Game] Starting Async Load Sequence...");
-		this.updateLoadingProgress(0, "Initializing Engine...");
-		await new Promise(r => setTimeout(r, 50)); // Yield
+		// Use a slight delay to allow UI to mount
+		setTimeout(async () => {
+			try {
+				this.updateLoadingProgress(0, "Initializing Engine...");
+				await new Promise(r => setTimeout(r, 50));
 
-		try {
-			// 2. Init Assets (Async)
-			this.currentSceneMode = 'game';
+				// 2. Init Assets (Async)
+				this.currentSceneMode = 'game';
 
-			// Texture Gen (Heavy)
-			this.updateLoadingProgress(20, "Generating Textures...");
-			await new Promise(r => setTimeout(r, 50));
+				// Texture Gen
+				this.updateLoadingProgress(20, "Generating Textures...");
+				await new Promise(r => setTimeout(r, 50));
 
-			// Ensure textures are cached/created
-			if (!this._cachedGridTex) {
-				this._cachedGridTex = TextureGenerator.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
-				this._cachedWallTex = TextureGenerator.createGrid(512, 512, '#ff0055', '#220a10', 2);
+				if (!this._cachedGridTex) {
+					this._cachedGridTex = TextureGenerator.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
+					this._cachedWallTex = TextureGenerator.createGrid(512, 512, '#ff0055', '#220a10', 2);
+				}
+
+				this.updateLoadingProgress(40, "Loading Assets...");
+				await new Promise(r => setTimeout(r, 50));
+
+				// 3. Init Heavy Assets
+				await this.initializeGameAssets();
+
+				this.updateLoadingProgress(60, "Building World...");
+				await new Promise(r => setTimeout(r, 50));
+
+				// 4. Load Level Geometry
+				this.loadGameLevel(mode);
+
+				this.updateLoadingProgress(90, "Finalizing...");
+				await new Promise(r => setTimeout(r, 300));
+
+				// Force Camera Reset to prevent being stuck in 0,0,0 inside geometry
+				if (this.camera) {
+					this.camera.position.set(0, 5, 0); // Safe height
+					this.camera.lookAt(0, 5, 20);
+					this.camera.updateProjectionMatrix();
+				}
+				if (this.player) {
+					this.player.position.set(0, 5, 0);
+					this.player.velocity.set(0, 0, 0);
+				}
+				if (this.controls && this.controls.getObject()) {
+					this.controls.getObject().position.set(0, 5, 0);
+				}
+
+				// Reset Clock
+				this.clock.start();
+				this._accum = 0;
+
+				this.updateLoadingProgress(100, "Ready!");
+				await new Promise(r => setTimeout(r, 200));
+
+				// 5. Remove Loading Screen
+				const screen = document.getElementById('loading-screen');
+				if (screen) screen.remove();
+
+				// 6. Start Match Countdown
+				this.startMatchCountdown(3);
+
+			} catch (e) {
+				console.error("Critical Load Error:", e);
+				// Check for user-friendly error
+				alert("Error Loading Game: " + e.message);
+				const screen = document.getElementById('loading-screen');
+				if (screen) screen.remove();
 			}
-			this.updateLoadingProgress(40, "Loading Assets...");
-			await new Promise(r => setTimeout(r, 50));
-
-			// 3. Init heavy assets (creates weapon etc)
-			await this.initializeGameAssets();
-			this.updateLoadingProgress(60, "Building World...");
-			await new Promise(r => setTimeout(r, 50));
-
-			// 4. Load Level Geometry
-			this.loadGameLevel(mode);
-			this.updateLoadingProgress(90, "Finalizing...");
-			await new Promise(r => setTimeout(r, 500)); // Artificial wait for smooth visuals
-
-			this.updateLoadingProgress(100, "Ready!");
-			await new Promise(r => setTimeout(r, 200));
-
-			// 5. Remove Loading Screen
-			const screen = document.getElementById('loading-screen');
-			if (screen) screen.remove();
-
-			// 6. Start Match Countdown (3-2-1)
-			this.startMatchCountdown(3);
-
-		} catch (e) {
-			console.error("Critical Load Error:", e);
-			alert("Error Loading Game: " + e.message);
-			// Hide loading anyway so user can see what happened
-			const screen = document.getElementById('loading-screen');
-			if (screen) screen.remove();
-		}
+		}, 100);
 	}
 
 	startMatchCountdown(seconds) {
-		// Create Overlay if not exists
+		// Create Overlay
 		let overlay = document.getElementById('countdown-overlay');
 		if (!overlay) {
 			overlay = document.createElement('div');

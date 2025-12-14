@@ -92,6 +92,22 @@ export class GameSession {
             this._updateProgress(100, 'Ready!');
             await this._yield();
 
+            // CRITICAL FIX: Force Camera/Player Reset (Mirroring Game.js fix)
+            // preventing camera from being stuck at 0,0,0
+            if (this.game.camera) {
+                this.game.camera.position.set(0, 5, 0);
+                this.game.camera.lookAt(0, 5, 20);
+                this.game.camera.updateProjectionMatrix();
+            }
+            if (this.game.player) {
+                this.game.player.position.set(0, 5, 0);
+                this.game.player.velocity.set(0, 0, 0);
+                this.game.player.y = 5.0; // Sync logic
+            }
+            if (this.game.controls && this.game.controls.getObject()) {
+                this.game.controls.getObject().position.set(0, 5, 0);
+            }
+
             // Hook Head Bob into loop
             this._hookHeadBob();
 
@@ -117,12 +133,27 @@ export class GameSession {
      */
     startGameLoop() {
         console.log('GameSession: Starting Game Loop');
+
+        // 1. Show HUD (Fix for missing UI)
+        const hud = document.getElementById('hud');
+        if (hud) hud.classList.remove('hidden');
+
+        // 2. Activate Game
         this.isGameActive = true;
         this.game.animating = true;
+
         try { this.game.startNextWave(); } catch (_) { }
         try { this.game._startTimeMs = performance.now(); } catch (_) { }
         try { this.game.startInGameMusicRotator(); } catch (_) { }
+
         this.game.loop();
+    }
+
+    // Alias for main.js compatibility
+    start() {
+        this.initialize().then(() => {
+            this.startGameLoop();
+        });
     }
 
     _hookHeadBob() {

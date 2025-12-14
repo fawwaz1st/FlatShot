@@ -173,6 +173,16 @@ function setupGameUI() {
     // Inject HUD
     UI_LAYER.innerHTML = HUD_HTML;
 
+    // Safety: Ensure HUD is not hidden by default structure
+    const hud = document.getElementById('hud');
+    if (hud) {
+        // We initially keep it hidden until countdown finishes, 
+        // OR we can show it immediately. 
+        // GameSession.startGameLoop will remove 'hidden' class, but let's be safe.
+        // Let's actually keep it hidden until game starts to avoid clutter during loading.
+        hud.classList.add('hidden');
+    }
+
     // Inject Pause Menu
     const pauseDiv = document.createElement('div');
     pauseDiv.innerHTML = PAUSE_HTML;
