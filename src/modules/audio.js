@@ -163,6 +163,247 @@ export class AudioFX {
 	}
 
 	// ----------------------------------------
+	// NEW: PAUSE / RESUME SOUNDS
+	// ----------------------------------------
+	pause() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		// Descending "freeze" sound
+		osc.type = 'sine';
+		osc.frequency.setValueAtTime(600, t);
+		osc.frequency.exponentialRampToValueAtTime(200, t + 0.15);
+
+		gain.gain.setValueAtTime(0.12, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+
+		osc.start(t); osc.stop(t + 0.2);
+	}
+
+	resume() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		// Ascending "unfreeze" sound
+		osc.type = 'sine';
+		osc.frequency.setValueAtTime(200, t);
+		osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
+
+		gain.gain.setValueAtTime(0.12, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+
+		osc.start(t); osc.stop(t + 0.2);
+	}
+
+	// ----------------------------------------
+	// NEW: WEAPON SWITCH
+	// ----------------------------------------
+	weaponSwitch() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+
+		// Mechanical click + slide
+		const osc1 = this.ctx.createOscillator();
+		const gain1 = this.ctx.createGain();
+		osc1.connect(gain1); gain1.connect(this.masterGain);
+		osc1.type = 'square';
+		osc1.frequency.setValueAtTime(400, t);
+		gain1.gain.setValueAtTime(0.08, t);
+		gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+		osc1.start(t); osc1.stop(t + 0.05);
+
+		// Slide
+		const osc2 = this.ctx.createOscillator();
+		const gain2 = this.ctx.createGain();
+		osc2.connect(gain2); gain2.connect(this.masterGain);
+		osc2.type = 'sawtooth';
+		osc2.frequency.setValueAtTime(200, t + 0.05);
+		osc2.frequency.linearRampToValueAtTime(350, t + 0.12);
+		gain2.gain.setValueAtTime(0, t);
+		gain2.gain.setValueAtTime(0.06, t + 0.05);
+		gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+		osc2.start(t); osc2.stop(t + 0.15);
+	}
+
+	// ----------------------------------------
+	// NEW: PICKUP SOUND
+	// ----------------------------------------
+	pickup() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		// Cheerful ascending arpeggio
+		osc.type = 'sine';
+		osc.frequency.setValueAtTime(400, t);
+		osc.frequency.setValueAtTime(600, t + 0.05);
+		osc.frequency.setValueAtTime(800, t + 0.1);
+
+		gain.gain.setValueAtTime(0.1, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+
+		osc.start(t); osc.stop(t + 0.2);
+	}
+
+	// ----------------------------------------
+	// NEW: STREAK / MULTIKILL
+	// ----------------------------------------
+	streak() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+
+		// Triumphant chord
+		[523.25, 659.25, 783.99].forEach((freq, i) => {
+			const osc = this.ctx.createOscillator();
+			const gain = this.ctx.createGain();
+			osc.connect(gain); gain.connect(this.masterGain);
+			osc.type = 'sine';
+			osc.frequency.setValueAtTime(freq, t);
+			gain.gain.setValueAtTime(0.08, t);
+			gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+			osc.start(t + i * 0.05); osc.stop(t + 0.5);
+		});
+	}
+
+	// ----------------------------------------
+	// NEW: ERROR / DENIED
+	// ----------------------------------------
+	error() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		// Buzzer
+		osc.type = 'square';
+		osc.frequency.setValueAtTime(150, t);
+
+		gain.gain.setValueAtTime(0.1, t);
+		gain.gain.setValueAtTime(0.1, t + 0.1);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+		osc.start(t); osc.stop(t + 0.15);
+	}
+
+	// ----------------------------------------
+	// NEW: COUNTDOWN BEEP
+	// ----------------------------------------
+	countdown(final = false) {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		osc.type = 'sine';
+		osc.frequency.setValueAtTime(final ? 880 : 440, t);
+
+		gain.gain.setValueAtTime(0.15, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + (final ? 0.4 : 0.15));
+
+		osc.start(t); osc.stop(t + (final ? 0.5 : 0.2));
+	}
+
+	// ----------------------------------------
+	// NEW: GAME START
+	// ----------------------------------------
+	gameStart() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+
+		// Rising sweep + chord
+		const sweep = this.ctx.createOscillator();
+		const sweepGain = this.ctx.createGain();
+		sweep.connect(sweepGain); sweepGain.connect(this.masterGain);
+		sweep.type = 'sawtooth';
+		sweep.frequency.setValueAtTime(100, t);
+		sweep.frequency.exponentialRampToValueAtTime(800, t + 0.3);
+		sweepGain.gain.setValueAtTime(0.1, t);
+		sweepGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+		sweep.start(t); sweep.stop(t + 0.4);
+
+		// Power chord at end
+		setTimeout(() => this.streak(), 300);
+	}
+
+	// ----------------------------------------
+	// NEW: LOW AMMO WARNING
+	// ----------------------------------------
+	lowAmmo() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		osc.type = 'triangle';
+		osc.frequency.setValueAtTime(300, t);
+		osc.frequency.setValueAtTime(250, t + 0.08);
+
+		gain.gain.setValueAtTime(0.08, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+		osc.start(t); osc.stop(t + 0.2);
+	}
+
+	// ----------------------------------------
+	// NEW: GRENADE THROW
+	// ----------------------------------------
+	grenadeThrow() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		osc.connect(gain); gain.connect(this.masterGain);
+
+		// Whoosh
+		osc.type = 'sawtooth';
+		osc.frequency.setValueAtTime(300, t);
+		osc.frequency.exponentialRampToValueAtTime(100, t + 0.25);
+
+		gain.gain.setValueAtTime(0.08, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+
+		osc.start(t); osc.stop(t + 0.3);
+	}
+
+	// ----------------------------------------
+	// NEW: EXPLOSION
+	// ----------------------------------------
+	explosion() {
+		if (!this.ctx) this.ensureCtx();
+		const t = this.ctx.currentTime;
+
+		// Low rumble + noise-like burst
+		const osc = this.ctx.createOscillator();
+		const gain = this.ctx.createGain();
+		const shaper = this.ctx.createWaveShaper();
+		shaper.curve = this._makeDistortionCurve(800);
+
+		osc.connect(shaper);
+		shaper.connect(gain);
+		gain.connect(this.masterGain);
+
+		osc.type = 'sawtooth';
+		osc.frequency.setValueAtTime(80, t);
+		osc.frequency.exponentialRampToValueAtTime(20, t + 0.5);
+
+		gain.gain.setValueAtTime(0.25, t);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+
+		osc.start(t); osc.stop(t + 0.6);
+	}
+
+	// ----------------------------------------
 	// 4. UI SOUNDS
 	// ----------------------------------------
 	hover() {

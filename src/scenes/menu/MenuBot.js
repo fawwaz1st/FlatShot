@@ -7,23 +7,28 @@ export class MenuBot {
         this.role = role;
         this.color = team === 'blue' ? 0x00f0ff : 0xff3366;
 
-        // Stats
+        // Stats - AGGRESSIVE (Base Stats)
         if (role === 'ASSAULT') {
-            this.speed = 12.0;
-            this.maxHp = 150;
-            this.fireRate = 0.05;
-            this.spread = 1.0;
-        } else if (role === 'FLANKER') {
-            this.speed = 13.5;
-            this.maxHp = 100;
-            this.fireRate = 0.03;
+            this.baseSpeed = 16.0;
+            this.baseMaxHp = 120;
+            this.baseFireRate = 0.12;
             this.spread = 0.8;
+        } else if (role === 'FLANKER') {
+            this.baseSpeed = 18.0;
+            this.baseMaxHp = 80;
+            this.baseFireRate = 0.10;
+            this.spread = 0.6;
         } else { // SNIPER
-            this.speed = 9.0;
-            this.maxHp = 100;
-            this.fireRate = 0.012;
-            this.spread = 0.1;
+            this.baseSpeed = 12.0;
+            this.baseMaxHp = 80;
+            this.baseFireRate = 0.04;
+            this.spread = 0.15;
         }
+
+        // Current Stats (will be modified by buffs)
+        this.speed = this.baseSpeed;
+        this.maxHp = this.baseMaxHp;
+        this.fireRate = this.baseFireRate;
 
         this.hp = this.maxHp;
         this.state = 'IDLE';
@@ -32,11 +37,21 @@ export class MenuBot {
         this.targetPos = new THREE.Vector3(x, 0, z);
         this.targetBot = null;
 
+        // Advanced AI State
+        this.lastTargetPos = null;
+        this.targetVelocity = new THREE.Vector3();
+        this.underFire = false;
+        this.underFireTimer = 0;
+        this.dodgeDir = new THREE.Vector3();
+        this.flanking = false;
+        this.suppressTimer = 0;
+        this.awarenessLevel = 0; // 0-1, increases when seeing enemies
+
         // Physics
         this.velocity = new THREE.Vector3();
-        this.vy = 0; // Vertical vel
+        this.vy = 0;
         this.onGround = false;
-        this.jumpCooldown = 0; // Cooldown for jumping
+        this.jumpCooldown = 0;
 
         // Mesh
         this.group = new THREE.Group();
@@ -139,22 +154,94 @@ export class MenuBot {
 
     update(dt, arena, allBots) {
         if (this.hp <= 0) return;
+
+        // Apply Team Buffs
+        if (arena.getTeamBuff) {
+            const buff = arena.getTeamBuff(this.team);
+            this.speed = this.baseSpeed * buff;
+            this.fireRate = this.baseFireRate * buff;
+            // HP buff only increases cap, current HP stays proportional or heals?
+            // For now just speed and aggression
+        }
+
         this.stateTimer -= dt;
         if (this.jumpCooldown > 0) this.jumpCooldown -= dt;
+        if (this.underFireTimer > 0) this.underFireTimer -= dt;
+        else this.underFire = false;
+        if (this.suppressTimer > 0) this.suppressTimer -= dt;
 
         // Gravity
-        this.vy -= 40.0 * dt; // Strong gravity
+        this.vy -= 40.0 * dt;
         if (this.vy < -20) this.vy = -20;
 
-        // Perception
+        // Perception with prediction
         this._scanForTarget(allBots);
+        this._updateAwareness(dt);
+
+        // Dodging when under fire
+        if (this.underFire && this.onGround && Math.random() < 0.05) {
+            this._dodge(arena);
+        }
 
         // State Logic
         if (this.state === 'IDLE') {
-            if (this.stateTimer <= 0) this._chooseTacticalCover(arena, allBots);
+            if (this.stateTimer <= 0) {
+                // Check for objective from arena game mode (pass allBots for role assignment)
+                const objective = arena.getObjective ? arena.getObjective(this, allBots) : null;
+                const gameMode = arena.gameMode || 'dm';
+
+                if (gameMode === 'dm') {
+                    // DEATHMATCH: Brutal - rush directly to nearest enemy
+                    if (this.targetBot && this.targetBot.hp > 0) {
+                        this.targetPos.copy(this.targetBot.group.position);
+                        this.state = 'MOVE';
+                        this.stateTimer = 0.5 + Math.random() * 0.5; // Short bursts
+                    } else {
+                        // No target? Hunt aggressively
+                        this.targetPos.set(
+                            (Math.random() - 0.5) * 80,
+                            0,
+                            (Math.random() - 0.5) * 60
+                        );
+                        this.state = 'MOVE';
+                        this.stateTimer = 1.0;
+                    }
+                } else if (gameMode === 'ctf') {
+                    // CTF: Sneaky but aggressive - flank more often
+                    if (objective && Math.random() < 0.8) {
+                        this.targetPos.copy(objective.position);
+                        // Add flanking offset for sneaky approach
+                        if (objective.type === 'attack') {
+                            this.targetPos.x += (Math.random() - 0.5) * 20;
+                            this.targetPos.z += (Math.random() - 0.5) * 20;
+                        }
+                        this.state = Math.random() < 0.4 ? 'FLANK' : 'MOVE';
+                        this.stateTimer = 1.5 + Math.random();
+                    } else {
+                        this._chooseTacticalCover(arena, allBots);
+                    }
+                } else if (gameMode === 'koth' && objective) {
+                    // KOTH: Focus on hill zone
+                    if (Math.random() < 0.85) {
+                        this.targetPos.copy(objective.position);
+                        // Spread out in zone
+                        this.targetPos.x += (Math.random() - 0.5) * 10;
+                        this.targetPos.z += (Math.random() - 0.5) * 10;
+                        this.state = 'MOVE';
+                        this.stateTimer = 1.0 + Math.random();
+                    } else {
+                        this._chooseTacticalCover(arena, allBots);
+                    }
+                } else {
+                    this._chooseTacticalCover(arena, allBots);
+                }
+            }
             if (this.targetBot) {
                 this._aimAndFire(dt, arena);
-                if (this.stateTimer < 0.5) this._chooseTacticalCover(arena, allBots);
+                // React faster when aware
+                if (this.stateTimer < 0.5 - this.awarenessLevel * 0.3) {
+                    this._chooseTacticalCover(arena, allBots);
+                }
             }
         }
         else if (this.state === 'MOVE') {
@@ -163,30 +250,76 @@ export class MenuBot {
 
             if (dist < 0.5 || this.stateTimer <= 0) {
                 this.state = 'IDLE';
-                this.stateTimer = 0.3 + Math.random() * 0.7;
+                this.stateTimer = 0.2 + Math.random() * 0.5;
+                this.flanking = false;
             } else {
-                // Move Dir (XZ only)
-                const moveDir = new THREE.Vector3(this.targetPos.x - this.group.position.x, 0, this.targetPos.z - this.group.position.z).normalize();
+                const moveDir = new THREE.Vector3(
+                    this.targetPos.x - this.group.position.x, 0,
+                    this.targetPos.z - this.group.position.z
+                ).normalize();
 
-                // Horizontal Move
                 const step = moveDir.clone().multiplyScalar(this.speed * dt);
                 this._moveHorizontal(step, arena);
 
-                // Rotation
-                if (this.targetBot && this.role !== 'SNIPER') {
-                    this._turnTowards(this.targetBot.group.position, dt * 10);
+                // Smart rotation
+                if (this.targetBot && arena.checkVisibility(this.group.position, this.targetBot.group.position)) {
+                    this._turnTowards(this.targetBot.group.position, dt * 12);
+                    // Shoot while moving (suppression)
+                    if (this.suppressTimer <= 0 && Math.random() < this.fireRate * 0.8) {
+                        this._shoot(arena);
+                    }
                 } else {
-                    this._turnTowards(this.targetPos, dt * 10);
+                    this._turnTowards(this.targetPos, dt * 8);
                 }
-
-                if (this.targetBot && Math.random() < (this.fireRate * 0.5)) {
-                    this._shoot(arena);
+            }
+        }
+        else if (this.state === 'FLANK') {
+            // Flanking movement - move perpendicular to enemy
+            const dist = this.group.position.distanceTo(this.targetPos);
+            if (dist < 1.0 || this.stateTimer <= 0) {
+                this.state = 'IDLE';
+                this.stateTimer = 0.3;
+            } else {
+                const moveDir = new THREE.Vector3(
+                    this.targetPos.x - this.group.position.x, 0,
+                    this.targetPos.z - this.group.position.z
+                ).normalize();
+                const step = moveDir.clone().multiplyScalar(this.speed * 1.2 * dt);
+                this._moveHorizontal(step, arena);
+                if (this.targetBot) {
+                    this._turnTowards(this.targetBot.group.position, dt * 10);
                 }
+            }
+        }
+        else if (this.state === 'DODGE') {
+            // Quick sideways dodge
+            const step = this.dodgeDir.clone().multiplyScalar(this.speed * 1.5 * dt);
+            this._moveHorizontal(step, arena);
+            if (this.stateTimer <= 0) {
+                this.state = 'IDLE';
+                this.stateTimer = 0.1;
             }
         }
 
         // Apply Vertical Physics
         this._moveVertical(dt, arena);
+    }
+
+    _updateAwareness(dt) {
+        if (this.targetBot && this.targetBot.hp > 0) {
+            this.awarenessLevel = Math.min(1, this.awarenessLevel + dt * 0.5);
+        } else {
+            this.awarenessLevel = Math.max(0, this.awarenessLevel - dt * 0.2);
+        }
+    }
+
+    _dodge(arena) {
+        // Quick strafe left or right
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.group.quaternion);
+        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+        this.dodgeDir = right.multiplyScalar(Math.random() > 0.5 ? 1 : -1);
+        this.state = 'DODGE';
+        this.stateTimer = 0.25;
     }
 
     _moveHorizontal(vec, arena) {
@@ -266,12 +399,30 @@ export class MenuBot {
                 }
             }
         }
+
+        // Track target velocity for prediction
+        if (nearest && this.targetBot === nearest && this.lastTargetPos) {
+            this.targetVelocity.subVectors(nearest.group.position, this.lastTargetPos);
+        } else {
+            this.targetVelocity.set(0, 0, 0);
+        }
+
+        if (nearest) {
+            this.lastTargetPos = nearest.group.position.clone();
+        }
+
         this.targetBot = nearest;
     }
 
     _aimAndFire(dt, arena) {
         if (!this.targetBot) return;
-        this._turnTowards(this.targetBot.group.position, dt * 12);
+
+        // Predict target position
+        const predictionTime = 0.15 + Math.random() * 0.1;
+        const predictedPos = this.targetBot.group.position.clone()
+            .add(this.targetVelocity.clone().multiplyScalar(predictionTime * 60));
+
+        this._turnTowards(predictedPos, dt * 12);
 
         if (arena.checkVisibility(this.group.position, this.targetBot.group.position)) {
             if (Math.random() < this.fireRate) {
@@ -283,6 +434,13 @@ export class MenuBot {
     _shoot(arena) {
         if (!this.targetBot) return;
         arena.spawnProjectile(this, this.targetBot, this.spread);
+        this.suppressTimer = 0.1;
+    }
+
+    // Called when hit by projectile
+    registerHit() {
+        this.underFire = true;
+        this.underFireTimer = 1.5;
     }
 
     _turnTowards(pos, speed) {
@@ -296,7 +454,13 @@ export class MenuBot {
         const enemy = this.targetBot;
         const enemyPos = enemy ? enemy.group.position : new THREE.Vector3();
 
-        const count = 10;
+        // Flanker role - go for flanking position
+        if (this.role === 'FLANKER' && enemy && Math.random() < 0.6) {
+            this._initiateFlank(enemy, arena);
+            return;
+        }
+
+        const count = 15;
         let bestP = null;
         let bestS = -Infinity;
 
@@ -306,22 +470,35 @@ export class MenuBot {
 
             let score = 0;
             const dMe = p.distanceTo(this.group.position);
-            const dEn = p.distanceTo(enemyPos);
+            const dEn = enemy ? p.distanceTo(enemyPos) : 0;
 
             if (this.role === 'ASSAULT') {
                 score -= dEn * 1.5;
-                score -= dMe * 0.2;
+                score -= dMe * 0.3;
+                // Prefer positions with line of sight
+                if (enemy && arena.checkVisibility(p, enemyPos)) score += 30;
             } else if (this.role === 'SNIPER') {
                 score += dEn * 0.5;
-                if (dMe > 20) score -= 10;
-                // High ground bonus
-                if (p.y > 1.0) score += 40;
+                if (dMe > 25) score -= 15;
+                if (p.y > 1.0) score += 50; // High ground bonus
+                // Prefer positions with line of sight
+                if (enemy && arena.checkVisibility(p, enemyPos)) score += 40;
             } else {
+                // Flanker uses _initiateFlank instead
                 score += (Math.abs(p.x) + Math.abs(p.z)) * 1.0;
-                score -= dEn * 0.2;
+                score -= dEn * 0.1;
             }
 
-            if (dMe < 2) score -= 50;
+            // Avoid positions too close to current
+            if (dMe < 3) score -= 60;
+
+            // Avoid crowding with allies
+            for (const bot of allBots) {
+                if (bot !== this && bot.team === this.team && bot.hp > 0) {
+                    const d = p.distanceTo(bot.group.position);
+                    if (d < 5) score -= 20;
+                }
+            }
 
             if (score > bestS) {
                 bestS = score;
@@ -331,15 +508,38 @@ export class MenuBot {
 
         if (bestP) {
             this.targetPos.copy(bestP);
-            this.targetPos.x += (Math.random() - 0.5) * 2;
-            this.targetPos.z += (Math.random() - 0.5) * 2;
+            this.targetPos.x += (Math.random() - 0.5) * 3;
+            this.targetPos.z += (Math.random() - 0.5) * 3;
             this.state = 'MOVE';
-            this.stateTimer = 1.0 + Math.random();
+            this.stateTimer = 1.2 + Math.random() * 0.8;
         }
+    }
+
+    _initiateFlank(enemy, arena) {
+        // Calculate flanking position - perpendicular to enemy direction
+        const toEnemy = new THREE.Vector3().subVectors(enemy.group.position, this.group.position);
+        const perpendicular = new THREE.Vector3(-toEnemy.z, 0, toEnemy.x).normalize();
+
+        // Choose left or right flank based on which is clearer
+        const flankDist = 15 + Math.random() * 10;
+        const leftPos = this.group.position.clone().add(perpendicular.clone().multiplyScalar(flankDist));
+        const rightPos = this.group.position.clone().add(perpendicular.clone().multiplyScalar(-flankDist));
+
+        // Pick the one further from enemy's facing direction
+        const enemyForward = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.group.quaternion);
+        const leftAngle = Math.abs(enemyForward.dot(perpendicular));
+        const rightAngle = Math.abs(enemyForward.dot(perpendicular.clone().negate()));
+
+        this.targetPos = leftAngle > rightAngle ? leftPos : rightPos;
+        this.targetPos.y = 0;
+        this.state = 'FLANK';
+        this.stateTimer = 2.0;
+        this.flanking = true;
     }
 
     takeDamage(amt) {
         this.hp -= amt;
+        this.registerHit(); // Trigger under fire state
         if (this.hp <= 0) {
             this.scene.remove(this.group);
         }

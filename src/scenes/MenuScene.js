@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { MenuArena } from './menu/MenuArena.js';
-import { MenuBot } from './menu/MenuBot.js';
+import { MenuArena, MenuBot } from './menu/index.js';
 
 export class MenuScene {
     constructor(game) {
@@ -20,21 +19,39 @@ export class MenuScene {
         this.game.camera.fov = 45;
         this.game.camera.updateProjectionMatrix();
 
-        // 2. Lights (CRITICAL VISIBILITY FIX)
-        this.scene.background = new THREE.Color(0x111111); // Dark Gray
-        // Hack: Reduce fog density locally for menu clarity
-        if (this.scene.fog) this.scene.fog.density = 0.015;
+        // 2. Lights (MAXIMUM VISIBILITY)
+        this.scene.background = new THREE.Color(0x0a0a12); // Slightly blue-tinted dark
+        // Subtle atmospheric fog
+        this.scene.fog = new THREE.FogExp2(0x0a0a18, 0.008); // Very light fog for depth
 
-        // Fail-safe Ambient Light (Forces everything to be visible)
-        const ambient = new THREE.AmbientLight(0xffffff, 3.5); // Boosted
+        // Hemisphere Light (sky + ground bounce)
+        const hemiLight = new THREE.HemisphereLight(0x88ccff, 0x444422, 2.0);
+        this.scene.add(hemiLight);
+
+        // Strong Ambient Light
+        const ambient = new THREE.AmbientLight(0xffffff, 5.0);
         this.scene.add(ambient);
 
-        // Key Light for Shape Definition
-        const dirLight = new THREE.DirectionalLight(0xffffff, 5.0); // Boosted
-        dirLight.position.set(10, 20, 10);
-        dirLight.lookAt(0, 0, 0); // Ensure it points to center
+        // Key Light - Main directional
+        const dirLight = new THREE.DirectionalLight(0xffffff, 8.0);
+        dirLight.position.set(20, 40, 20);
         this.scene.add(dirLight);
-        this.lights = [ambient, dirLight];
+
+        // Fill Light - Opposite side
+        const fillLight = new THREE.DirectionalLight(0x88aaff, 4.0);
+        fillLight.position.set(-20, 30, -20);
+        this.scene.add(fillLight);
+
+        // Accent Point Lights at arena edges
+        const accent1 = new THREE.PointLight(0x00ffff, 3.0, 100);
+        accent1.position.set(-50, 20, 0);
+        this.scene.add(accent1);
+
+        const accent2 = new THREE.PointLight(0xff3366, 3.0, 100);
+        accent2.position.set(50, 20, 0);
+        this.scene.add(accent2);
+
+        this.lights = [hemiLight, ambient, dirLight, fillLight, accent1, accent2];
 
         // 3. Init Arena
         this.arena = new MenuArena(this.game);
@@ -47,15 +64,28 @@ export class MenuScene {
     }
 
     _spawnSquad(team, x) {
-        // 2 Assault, 2 Flanker, 2 Sniper
-        this.bots.push(new MenuBot(this.scene, team, 'ASSAULT', x, -5));
-        this.bots.push(new MenuBot(this.scene, team, 'ASSAULT', x, 5));
+        // 12 bots per team (24 total): 4 Assault, 4 Flanker, 4 Sniper
+        const spacing = 8;
 
-        this.bots.push(new MenuBot(this.scene, team, 'FLANKER', x, -20));
-        this.bots.push(new MenuBot(this.scene, team, 'FLANKER', x, 20));
+        // 4 Assault - Front line
+        for (let i = 0; i < 4; i++) {
+            const z = (i - 1.5) * spacing;
+            this.bots.push(new MenuBot(this.scene, team, 'ASSAULT', x, z));
+        }
 
-        this.bots.push(new MenuBot(this.scene, team, 'SNIPER', x * 1.2, -8));
-        this.bots.push(new MenuBot(this.scene, team, 'SNIPER', x * 1.2, 8));
+        // 4 Flanker - Sides
+        for (let i = 0; i < 4; i++) {
+            const z = (i - 1.5) * spacing * 1.2;
+            const offsetX = x * 0.7;
+            this.bots.push(new MenuBot(this.scene, team, 'FLANKER', offsetX, z));
+        }
+
+        // 4 Sniper - Back line
+        for (let i = 0; i < 4; i++) {
+            const z = (i - 1.5) * spacing * 0.8;
+            const offsetX = x * 1.4;
+            this.bots.push(new MenuBot(this.scene, team, 'SNIPER', offsetX, z));
+        }
     }
 
     update(dt) {

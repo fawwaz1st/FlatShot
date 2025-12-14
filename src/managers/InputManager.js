@@ -1,4 +1,4 @@
-import { createInputState } from './input.js';
+import { createInputState } from '../game/input.js';
 
 export function attachInputManager(game) {
 	try {

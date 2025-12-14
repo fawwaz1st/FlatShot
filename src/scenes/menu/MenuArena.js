@@ -1,39 +1,70 @@
 import * as THREE from 'three';
 
+// Game Mode Types
+export const MenuGameModes = {
+    KING_OF_HILL: 'koth',
+    CAPTURE_FLAG: 'ctf',
+    DEATHMATCH: 'dm'
+};
+
 export class MenuArena {
     constructor(game) {
         this.game = game;
         this.scene = game.scene;
-        this.obstacles = []; // { mesh, box, edges, w, d, h }
+        this.obstacles = [];
         this.coverPoints = [];
         this.particles = [];
         this.projectiles = [];
 
         this.raycaster = new THREE.Raycaster();
-        this.arenaSize = 80; // Expanded Area
+        this.arenaSize = 140;
 
         this.shuffleTimer = 10.0;
 
         // Audio
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         this.masterGain = this.audioCtx.createGain();
-        this.masterGain.gain.value = 0.05; // Low volume
+        this.masterGain.gain.value = 0.05;
         this.masterGain.connect(this.audioCtx.destination);
 
+        // === GAME MODE SYSTEM ===
+        const modes = [MenuGameModes.KING_OF_HILL, MenuGameModes.CAPTURE_FLAG, MenuGameModes.DEATHMATCH];
+        this.gameMode = modes[Math.floor(Math.random() * modes.length)];
+        console.log(`[MenuArena] Game Mode: ${this.gameMode.toUpperCase()}`);
+
+        // Mode-specific state
+        this.scores = { blue: 0, red: 0 };
+
+        // KOTH: Hill zone
+        this.hillZone = null;
+        this.hillOwner = null; // 'blue' | 'red' | null
+        this.hillProgress = { blue: 0, red: 0 };
+
+        // CTF: Flags
+        this.flags = { blue: null, red: null };
+        this.flagCarriers = { blue: null, red: null }; // Bot carrying enemy flag
+        this.flagBases = { blue: new THREE.Vector3(-60, 0, 0), red: new THREE.Vector3(60, 0, 0) };
+
         this._setupEnv();
+        this._setupGameMode();
     }
 
     _setupEnv() {
-        // Floor
-        // Floor (Neon Grid)
-        const grid = new THREE.GridHelper(this.arenaSize * 2, 80, 0x00ffff, 0x8800ff);
+        // Floor - Brighter Neon Grid
+        const grid = new THREE.GridHelper(this.arenaSize * 2, 80, 0x00ffff, 0xff00ff);
         grid.position.y = 0.05;
-        grid.material.opacity = 0.6;
+        grid.material.opacity = 0.9;
         grid.material.transparent = true;
         this.scene.add(grid);
 
+        // Floor plane with slight glow
         const planeGeo = new THREE.PlaneGeometry(this.arenaSize * 2, this.arenaSize * 2);
-        const planeMat = new THREE.MeshBasicMaterial({ color: 0x040408 });
+        const planeMat = new THREE.MeshStandardMaterial({
+            color: 0x0a0a15,
+            emissive: 0x050510,
+            emissiveIntensity: 0.5,
+            roughness: 0.9
+        });
         const plane = new THREE.Mesh(planeGeo, planeMat);
         plane.rotation.x = -Math.PI / 2;
         this.scene.add(plane);
@@ -43,8 +74,8 @@ export class MenuArena {
     }
 
     _spawnInitialObstacles() {
-        // Procedural Generation: Create 40 random obstacles
-        for (let i = 0; i < 40; i++) {
+        // Procedural Generation: Create 60 obstacles for diverse terrain
+        for (let i = 0; i < 60; i++) {
             const w = 4 + Math.random() * 8;
             const d = 4 + Math.random() * 8;
             const h = 2 + Math.random() * 6;
@@ -61,18 +92,24 @@ export class MenuArena {
         const boxGeo = new THREE.BoxGeometry(1, 1, 1);
         const edgesGeo = new THREE.EdgesGeometry(boxGeo);
 
+        // Brighter obstacles with stronger emissive
         const mesh = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({
-            color: 0x222233,
-            roughness: 0.2,
-            metalness: 0.8,
-            emissive: 0x111122,
-            emissiveIntensity: 0.4
+            color: 0x334455,
+            roughness: 0.3,
+            metalness: 0.7,
+            emissive: 0x223344,
+            emissiveIntensity: 0.8
         }));
         mesh.position.set(cfg.x, cfg.h / 2, cfg.z);
         mesh.scale.set(cfg.w, cfg.h, cfg.d);
         this.scene.add(mesh);
 
-        const edges = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.4 }));
+        // Brighter edge glow
+        const edges = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.8
+        }));
         edges.position.copy(mesh.position);
         edges.scale.copy(mesh.scale);
         this.scene.add(edges);
@@ -109,6 +146,7 @@ export class MenuArena {
         }
         this._updateProjectiles(dt, bots);
         this._updateParticles(dt);
+        this._updateGameMode(dt, bots);
     }
 
     _shuffleObstacles(bots) {
@@ -142,8 +180,8 @@ export class MenuArena {
             this._spawnSpark(obs.mesh.position, 0x00f0ff, 10);
 
             for (let i = 0; i < 10; i++) {
-                const newX = (Math.random() - 0.5) * 50;
-                const newZ = (Math.random() - 0.5) * 30;
+                const newX = (Math.random() - 0.5) * 100;
+                const newZ = (Math.random() - 0.5) * 60;
 
                 const tempBox = new THREE.Box3();
                 tempBox.min.set(newX - obs.w / 2 - 0.5, 0, newZ - obs.d / 2 - 0.5);
@@ -251,7 +289,11 @@ export class MenuArena {
                             hit = true; hitP = pt;
                             this._spawnSpark(pt, bot.color, 10);
                             bot.takeDamage(p.damage);
-                            if (bot.hp <= 0) this._respawnBot(bot);
+                            if (bot.hp <= 0) {
+                                // Kill confirmed
+                                this.registerKill(p.shooterTeam);
+                                this._respawnBot(bot);
+                            }
                             break;
                         }
                     }
@@ -273,8 +315,8 @@ export class MenuArena {
     }
 
     _respawnBot(bot) {
-        const x = bot.team === 'blue' ? -35 : 35;
-        const z = (Math.random() - 0.5) * 40;
+        const x = bot.team === 'blue' ? -60 : 60;
+        const z = (Math.random() - 0.5) * 80;
         this._spawnSpark(bot.group.position, bot.color, 30);
         bot.respawn(x, z);
     }
@@ -423,5 +465,443 @@ export class MenuArena {
         });
         this.projectiles.forEach(p => this.scene.remove(p.mesh));
         this.particles.forEach(p => this.scene.remove(p.mesh));
+
+        // Cleanup game mode objects
+        if (this.hillZone) {
+            this.scene.remove(this.hillZone.mesh);
+            this.scene.remove(this.hillZone.indicator);
+        }
+        if (this.flags.blue) {
+            this.scene.remove(this.flags.blue.group);
+            if (this.flags.blue.baseMesh) this.scene.remove(this.flags.blue.baseMesh);
+        }
+        if (this.flags.red) {
+            this.scene.remove(this.flags.red.group);
+            if (this.flags.red.baseMesh) this.scene.remove(this.flags.red.baseMesh);
+        }
+    }
+
+    // ========================================
+    // GAME MODE SYSTEM
+    // ========================================
+
+    _setupGameMode() {
+        if (this.gameMode === 'koth') {
+            this._setupKingOfHill();
+        } else if (this.gameMode === 'ctf') {
+            this._setupCaptureFlag();
+        }
+        // Deathmatch needs no special setup - just brutal fighting
+    }
+
+    _setupKingOfHill() {
+        // Create glowing hill zone at center
+        const zoneRadius = 15;
+        const zoneGeo = new THREE.CylinderGeometry(zoneRadius, zoneRadius, 0.5, 32);
+        const zoneMat = new THREE.MeshBasicMaterial({
+            color: 0x888888,
+            transparent: true,
+            opacity: 0.4
+        });
+        const zoneMesh = new THREE.Mesh(zoneGeo, zoneMat);
+        zoneMesh.position.set(0, 0.3, 0);
+        this.scene.add(zoneMesh);
+
+        // Indicator ring
+        const ringGeo = new THREE.RingGeometry(zoneRadius - 0.5, zoneRadius, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8
+        });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.rotation.x = -Math.PI / 2;
+        ringMesh.position.set(0, 0.6, 0);
+        this.scene.add(ringMesh);
+
+        this.hillZone = {
+            mesh: zoneMesh,
+            indicator: ringMesh,
+            radius: zoneRadius,
+            position: new THREE.Vector3(0, 0, 0)
+        };
+    }
+
+    _setupCaptureFlag() {
+        // Create flags at each team's base
+        this.flags.blue = this._createFlag('blue', this.flagBases.blue);
+        this.flags.red = this._createFlag('red', this.flagBases.red);
+    }
+
+    _createFlag(team, position) {
+        const group = new THREE.Group();
+        const color = team === 'blue' ? 0x00ffff : 0xff3366;
+
+        // Pole
+        const poleGeo = new THREE.CylinderGeometry(0.2, 0.2, 8, 8);
+        const poleMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+        const pole = new THREE.Mesh(poleGeo, poleMat);
+        pole.position.y = 4;
+        group.add(pole);
+
+        // Flag cloth
+        const flagGeo = new THREE.PlaneGeometry(5, 3);
+        const flagMat = new THREE.MeshBasicMaterial({
+            color: color,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9
+        });
+        const flag = new THREE.Mesh(flagGeo, flagMat);
+        flag.position.set(2.5, 6.5, 0);
+        group.add(flag);
+
+        // Glow base - SEPARATE from flag group so it always stays visible
+        const baseGeo = new THREE.CylinderGeometry(3, 3, 0.3, 16);
+        const baseMat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.5
+        });
+        const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+        baseMesh.position.copy(position);
+        baseMesh.position.y = 0.15;
+        this.scene.add(baseMesh); // Add to scene, not group
+
+        group.position.copy(position);
+        this.scene.add(group);
+
+        return {
+            group,
+            baseMesh, // Store reference for cleanup
+            basePosition: position.clone(),
+            isHome: true,
+            carrier: null
+        };
+    }
+
+    _updateGameMode(dt, bots) {
+        if (this.gameMode === 'koth') {
+            this._updateKingOfHill(dt, bots);
+        } else if (this.gameMode === 'ctf') {
+            this._updateCaptureFlag(dt, bots);
+        }
+        // Deathmatch: no special update needed
+    }
+
+    _updateKingOfHill(dt, bots) {
+        if (!this.hillZone) return;
+
+        // Count bots in zone
+        let blueInZone = 0;
+        let redInZone = 0;
+
+        bots.forEach(bot => {
+            if (bot.hp <= 0) return;
+            const dist = bot.group.position.distanceTo(this.hillZone.position);
+            if (dist < this.hillZone.radius) {
+                if (bot.team === 'blue') blueInZone++;
+                else redInZone++;
+            }
+        });
+
+        // Determine zone control
+        let newOwner = this.hillOwner;
+        if (blueInZone > 0 && redInZone === 0) {
+            newOwner = 'blue';
+            this.hillProgress.blue += dt * 10;
+        } else if (redInZone > 0 && blueInZone === 0) {
+            newOwner = 'red';
+            this.hillProgress.red += dt * 10;
+        } else if (blueInZone > 0 && redInZone > 0) {
+            // Contested - no progress
+            newOwner = null;
+        }
+
+        // Update visuals
+        if (newOwner !== this.hillOwner) {
+            this.hillOwner = newOwner;
+            this.dominationTimer = 0; // Reset timer on change
+
+            if (newOwner === 'blue') {
+                this.hillZone.mesh.material.color.setHex(0x00ffff);
+                this.hillZone.indicator.material.color.setHex(0x00ffff);
+            } else if (newOwner === 'red') {
+                this.hillZone.mesh.material.color.setHex(0xff3366);
+                this.hillZone.indicator.material.color.setHex(0xff3366);
+            } else {
+                this.hillZone.mesh.material.color.setHex(0x888888);
+                this.hillZone.indicator.material.color.setHex(0xffffff);
+            }
+        }
+
+        // Domination Buff Logic (+10% every 5s)
+        if (this.hillOwner) {
+            this.dominationTimer = (this.dominationTimer || 0) + dt;
+            if (this.dominationTimer >= 5.0) {
+                this._applyTeamBuff(this.hillOwner, 1.10); // +10%
+                this.dominationTimer = 0;
+                this.playSfx('shuffle');
+                // Flash effect
+                this._spawnSpark(this.hillZone.position, this.hillOwner === 'blue' ? 0x00ffff : 0xff3366, 20);
+            }
+        }
+
+        // Pulse effect
+        const pulse = 0.4 + Math.sin(performance.now() * 0.005) * 0.2;
+        this.hillZone.mesh.material.opacity = pulse;
+    }
+
+    // Called by MenuBot when it kills an enemy
+    registerKill(killerTeam) {
+        if (this.gameMode === 'dm') {
+            // Deathmatch: +2% for every kill
+            this._applyTeamBuff(killerTeam, 1.02);
+        }
+    }
+
+    _updateCaptureFlag(dt, bots) {
+        ['blue', 'red'].forEach(team => {
+            const enemyTeam = team === 'blue' ? 'red' : 'blue';
+            const flag = this.flags[team];
+            if (!flag) return;
+
+            if (flag.carrier) {
+                // Flag is being carried
+                if (flag.carrier.hp <= 0) {
+                    // Carrier died - drop flag
+                    flag.group.position.copy(flag.carrier.group.position);
+                    flag.group.position.y = 0;
+                    // Remove indicator from carrier
+                    this._removeFlagIndicator(flag.carrier);
+                    flag.carrier = null;
+                    flag.isHome = false;
+                } else {
+                    // Move flag with carrier (hide main flag, show indicator)
+                    flag.group.position.copy(flag.carrier.group.position);
+                    flag.group.position.y = -10; // Hide below ground
+
+                    // Update indicator position
+                    if (flag.carrier._flagIndicator) {
+                        flag.carrier._flagIndicator.position.y = 4;
+                    }
+
+                    // Check if carrier reached their base (capture)
+                    const distToBase = flag.carrier.group.position.distanceTo(this.flagBases[enemyTeam]);
+                    if (distToBase < 5) {
+                        // CAPTURED! +20% BUFF TO TEAM
+                        this.scores[enemyTeam]++;
+                        this._spawnSpark(flag.carrier.group.position, team === 'blue' ? 0x00ffff : 0xff3366, 50);
+                        this.playSfx('shuffle');
+
+                        // Apply +20% buff to capturing team
+                        this._applyTeamBuff(enemyTeam, 1.20);
+
+                        // Remove indicator and RESPAWN flag at enemy base for loop
+                        this._removeFlagIndicator(flag.carrier);
+                        flag.group.position.copy(flag.basePosition);
+                        flag.carrier = null;
+                        flag.isHome = true;
+                    }
+                }
+            } else {
+                // Flag visible at position
+                flag.group.position.y = 0;
+
+                // Flag is stationary - check for pickup by enemy
+                bots.forEach(bot => {
+                    if (bot.team === enemyTeam && bot.hp > 0 && !flag.carrier) {
+                        const dist = bot.group.position.distanceTo(flag.group.position);
+                        if (dist < 3) {
+                            // Pickup flag
+                            flag.carrier = bot;
+                            flag.isHome = false;
+                            this._spawnSpark(flag.group.position, 0xffff00, 15);
+                            // Add flag indicator above carrier
+                            this._addFlagIndicator(bot, team);
+                        }
+                    }
+                });
+
+                // Auto-return if dropped and own team touches it
+                if (!flag.isHome) {
+                    bots.forEach(bot => {
+                        if (bot.team === team && bot.hp > 0) {
+                            const dist = bot.group.position.distanceTo(flag.group.position);
+                            if (dist < 3) {
+                                // Return flag
+                                flag.group.position.copy(flag.basePosition);
+                                flag.isHome = true;
+                                this._spawnSpark(flag.group.position, 0x00ff00, 20);
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    _addFlagIndicator(bot, flagTeam) {
+        if (bot._flagIndicator) return; // Already has one
+
+        const color = flagTeam === 'blue' ? 0x00ffff : 0xff3366;
+        const group = new THREE.Group();
+
+        // Mini pole
+        const pole = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.05, 0.05, 2, 6),
+            new THREE.MeshBasicMaterial({ color: 0xffffff })
+        );
+        pole.position.y = 1;
+        group.add(pole);
+
+        // Mini flag
+        const flagMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(1.2, 0.8),
+            new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+        );
+        flagMesh.position.set(0.6, 1.8, 0);
+        group.add(flagMesh);
+
+        group.position.y = 4;
+        bot.group.add(group);
+        bot._flagIndicator = group;
+    }
+
+    _removeFlagIndicator(bot) {
+        if (bot && bot._flagIndicator) {
+            bot.group.remove(bot._flagIndicator);
+            bot._flagIndicator = null;
+        }
+    }
+
+    // Apply buff to all team bots on flag capture
+    _applyTeamBuff(team, multiplier) {
+        if (!this._teamBuffs) this._teamBuffs = { blue: 1.0, red: 1.0 };
+        this._teamBuffs[team] *= multiplier;
+
+        // Apply to all bots of this team (will be applied in next update via MenuScene)
+        console.log(`[CTF] Team ${team.toUpperCase()} captured flag! Buff now: ${(this._teamBuffs[team] * 100).toFixed(0)}%`);
+
+        // Store buff level for bots to reference
+        this.teamBuffLevel = this._teamBuffs;
+    }
+
+    // Get team buff multiplier
+    getTeamBuff(team) {
+        if (!this._teamBuffs) return 1.0;
+        return this._teamBuffs[team] || 1.0;
+    }
+
+    // Get current objective for AI - Role-based intelligent assignments
+    getObjective(bot, allBots) {
+        if (this.gameMode === 'koth') {
+            // KOTH: Most go to zone, some flank
+            const offset = new THREE.Vector3(
+                (Math.random() - 0.5) * 12,
+                0,
+                (Math.random() - 0.5) * 12
+            );
+            return {
+                type: 'zone',
+                position: this.hillZone.position.clone().add(offset)
+            };
+        }
+
+        if (this.gameMode === 'ctf') {
+            const enemyTeam = bot.team === 'blue' ? 'red' : 'blue';
+            const ownFlag = this.flags[bot.team];
+            const enemyFlag = this.flags[enemyTeam];
+
+            // Get bot's role index (0-11 per team)
+            const teamBots = allBots ? allBots.filter(b => b.team === bot.team && b.hp > 0) : [];
+            const botIndex = teamBots.indexOf(bot);
+
+            // CRITICAL: If our flag is dropped, some must return it
+            if (ownFlag && !ownFlag.isHome && !ownFlag.carrier) {
+                // First 4 bots prioritize returning
+                if (botIndex < 4 || Math.random() < 0.3) {
+                    return { type: 'return', position: ownFlag.group.position.clone() };
+                }
+            }
+
+            // If this bot is carrying enemy flag - GO HOME FAST
+            if (enemyFlag && enemyFlag.carrier === bot) {
+                return { type: 'capture', position: this.flagBases[bot.team].clone() };
+            }
+
+            // If teammate is carrying enemy flag - ESCORT them
+            if (enemyFlag && enemyFlag.carrier && enemyFlag.carrier.team === bot.team) {
+                // Escorts surround the carrier
+                const carrierPos = enemyFlag.carrier.group.position.clone();
+                const angle = (botIndex / 12) * Math.PI * 2;
+                const escortOffset = new THREE.Vector3(
+                    Math.cos(angle) * 8,
+                    0,
+                    Math.sin(angle) * 8
+                );
+                return { type: 'escort', position: carrierPos.add(escortOffset) };
+            }
+
+            // If enemy is carrying our flag - INTERCEPT
+            if (ownFlag && ownFlag.carrier) {
+                // Predict where carrier is going (their base)
+                const carrierPos = ownFlag.carrier.group.position.clone();
+                const enemyBase = this.flagBases[enemyTeam];
+                // Intercept between carrier and their base
+                const interceptPos = carrierPos.clone().lerp(enemyBase, 0.3);
+                if (botIndex < 6) {
+                    return { type: 'intercept', position: interceptPos };
+                } else {
+                    // Others chase directly
+                    return { type: 'chase', position: carrierPos };
+                }
+            }
+
+            // Normal CTF roles based on bot index (0-11)
+            // 0-5: ATTACKERS - go get enemy flag
+            // 6-8: MIDFIELDERS - patrol middle
+            // 9-11: DEFENDERS - protect base
+
+            if (botIndex < 6) {
+                // ATTACKERS
+                if (enemyFlag && !enemyFlag.carrier) {
+                    // Add flanking offset for sneaky approach
+                    const flankOffset = new THREE.Vector3(
+                        (Math.random() - 0.5) * 15,
+                        0,
+                        (Math.random() - 0.5) * 15
+                    );
+                    return {
+                        type: 'attack',
+                        position: enemyFlag.group.position.clone().add(flankOffset)
+                    };
+                }
+            } else if (botIndex < 9) {
+                // MIDFIELDERS - patrol center, intercept enemies
+                const patrolPos = new THREE.Vector3(
+                    (bot.team === 'blue' ? -20 : 20) + (Math.random() - 0.5) * 30,
+                    0,
+                    (Math.random() - 0.5) * 40
+                );
+                return { type: 'patrol', position: patrolPos };
+            } else {
+                // DEFENDERS - stay near own flag
+                const defenseOffset = new THREE.Vector3(
+                    (Math.random() - 0.5) * 10,
+                    0,
+                    (Math.random() - 0.5) * 10
+                );
+                return {
+                    type: 'defend',
+                    position: this.flagBases[bot.team].clone().add(defenseOffset)
+                };
+            }
+
+            return null;
+        }
+
+        return null; // Deathmatch - fight freely
     }
 }

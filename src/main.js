@@ -1,6 +1,7 @@
 import { GameSession } from './GameSession.js';
 import { MenuSession } from './MenuSession.js';
 import { MENU_HTML, HUD_HTML, PAUSE_HTML } from './ui/layouts.js';
+import { attachUIAudioListeners, UISound } from './ui/UIAudio.js';
 
 // --- STATE MANAGEMENT ---
 const APP_CONTAINER = document.getElementById('canvas-container');
@@ -98,7 +99,8 @@ function bindMenuEvents() {
             targetMenu.style.opacity = '1';
             btn.classList.add('active');
 
-            // Audio Feedback (Optional, if we have a global audio manager, else skip)
+            // Audio Feedback
+            UISound.click();
         });
     });
 
@@ -112,6 +114,7 @@ function bindMenuEvents() {
     const btnQuick = document.getElementById('btn-quickmatch');
     if (btnQuick) {
         btnQuick.addEventListener('click', () => {
+            UISound.gameStart();
             startGame();
         });
     }
@@ -133,6 +136,7 @@ function bindGameEvents() {
     const quitBtn = document.getElementById('quitBtn');
 
     if (resumeBtn) resumeBtn.addEventListener('click', () => {
+        UISound.resume();
         const pm = document.getElementById('pauseMenu');
         if (pm) pm.classList.add('hidden');
         if (currentSession && currentSession.game) {
@@ -153,6 +157,7 @@ function bindGameEvents() {
             if (pm) {
                 const isHidden = pm.classList.contains('hidden');
                 if (isHidden) {
+                    UISound.pause();
                     pm.classList.remove('hidden');
                     if (currentSession && currentSession.game) currentSession.game.isPaused = true;
                     document.exitPointerLock();
