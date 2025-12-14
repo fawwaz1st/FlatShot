@@ -1,56 +1,63 @@
 import * as THREE from 'three';
+import { GameConfig } from '../game/config.js';
 
 const BODY_COLOR = 0xf24e1e;
 
+// Shared Resources (Static)
+const SharedGeo = {
+	capsule: new THREE.CapsuleGeometry(0.35, 0.8, 6, 12),
+	box: new THREE.BoxGeometry(0.6, 1.2, 0.6),
+	eye: new THREE.SphereGeometry(0.12, 8, 8)
+};
+const SharedMat = {
+	body: new THREE.MeshStandardMaterial({
+		color: 0x220000,
+		roughness: 0.2,
+		metalness: 0.8,
+		emissive: 0xff0044,
+		emissiveIntensity: 0.6
+	}),
+	proxy: new THREE.MeshBasicMaterial({ color: 0xff0044, wireframe: true }),
+	eye: new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.0 })
+};
+
 export class Enemy {
-	constructor(scene, position) {
-		this.health = 80;
-		this.speed = 2.6 + Math.random();
-		this.radius = 0.5;
-		this.baseShootCooldown = 0.7 + Math.random() * 0.5;
-		this.shootCooldown = this.baseShootCooldown;
-		this.lastShoot = 0;
+	constructor(scene) {
 		this.mesh = this.createMesh();
-		this.mesh.position.copy(new THREE.Vector3(position.x, 1, position.z));
+		// Move initial placement to activate()
+		this.mesh.visible = false;
 		scene.add(this.mesh);
-		// assign pointer untuk reverse lookup
-		try { this.mesh.userData.enemy = this; } catch(_) {}
-		// store marker reference for quick update each frame
-		try { this._marker = this.mesh.userData && this.mesh.userData._marker ? this.mesh.userData._marker : null; } catch(_) { this._marker = null; }
+
+		try { this.mesh.userData.enemy = this; } catch (_) { }
+		try { this._marker = this.mesh.userData._marker || null; } catch (_) { }
+
 		this._ray = new THREE.Raycaster();
-		// AI state tambahan
-		this.state = 'hunt';
-		this.lastSeenPos = this.mesh.position.clone();
-		this.evadeTimer = 0;
-		this.strafeDir = (Math.random()<0.5?-1:1);
-		this.strafeTimer = 0;
-		// reuse temporary vectors untuk kurangi alokasi per-frame
 		this._tmpVec = new THREE.Vector3();
 		this._tmpVec2 = new THREE.Vector3();
-		this._lastHasLOS = false;
-		this.nextThink = 0.0; // throttle expensive logic
-		this._thinkIntervalBase = 0.12; // base interval (s)
+
+		// State
+		this.active = false;
+		this._dead = true;
 	}
 
 	createMesh() {
 		const group = new THREE.Group();
-		// High-detail body (close)
-		const high = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.8, 6, 12), new THREE.MeshStandardMaterial({ color: BODY_COLOR, roughness: 0.7 }));
+		// High-detail
+		const high = new THREE.Mesh(SharedGeo.capsule, SharedMat.body);
 		high.castShadow = false;
 		group.add(high);
-		// Low-detail proxy (far): simple box
-		const low = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 0.6), new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+		// Low-detail
+		const low = new THREE.Mesh(SharedGeo.box, SharedMat.proxy);
 		low.visible = false;
 		group.add(low);
-		const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x330000 }));
+		// Eye
+		const eye = new THREE.Mesh(SharedGeo.eye, SharedMat.eye);
 		eye.position.set(0, 0.5, 0.35);
 		group.add(eye);
-		// tag untuk lookup cepat dari ray hits
-		group.userData.enemy = null; // akan diisi oleh constructor setelah return
-		// store refs untuk LOD toggle
+
 		group.userData._high = high; group.userData._low = low;
 
-		// marker sprite: simple colored billboard above head to indicate presence
+		// Marker
 		try {
 			const markerMat = new THREE.SpriteMaterial({ color: 0xff6b6b, depthTest: false, depthWrite: false });
 			const marker = new THREE.Sprite(markerMat);
@@ -60,13 +67,45 @@ export class Enemy {
 			marker.material.opacity = 0.95;
 			group.add(marker);
 			group.userData._marker = marker;
-		} catch(_) {}
+		} catch (_) { }
 		return group;
 	}
 
+	activate(position, difficultyMultiplier = 1.0) {
+		this.active = true;
+		this._dead = false;
+		this.mesh.visible = true;
+		this.mesh.position.copy(position);
+		this.mesh.position.y = 1;
+
+		// Reset stats based on config
+		const conf = GameConfig.enemy || {};
+		this.health = (conf.baseHealth || 80) * difficultyMultiplier;
+		this.speed = ((conf.baseSpeed || 2.6) + Math.random()) * (1.0 + (difficultyMultiplier - 1) * 0.1);
+		this.radius = 0.5;
+		this.baseShootCooldown = 0.7 + Math.random() * 0.5;
+		this.shootCooldown = this.baseShootCooldown;
+		this.lastShoot = 0;
+
+		this.state = 'hunt';
+		this.lastSeenPos = this.mesh.position.clone();
+		this.evadeTimer = 0;
+		this.strafeDir = (Math.random() < 0.5 ? -1 : 1);
+		this.strafeTimer = 0;
+		this._lastHasLOS = false;
+		this.nextThink = 0.0;
+		this._thinkIntervalBase = 0.12;
+	}
+
+	disable() {
+		this.active = false;
+		this._dead = true;
+		this.mesh.visible = false;
+		this.mesh.position.set(0, -100, 0); // Hide far away
+	}
+
 	applyDamage(amount) {
-		// jika sudah mati sebelumnya, jangan hitung ulang (mencegah double-counting)
-		if (this._dead) return false;
+		if (this._dead || !this.active) return false;
 		this.health -= amount;
 		if (this.health <= 0) {
 			this._dead = true;
@@ -83,168 +122,207 @@ export class Enemy {
 		dir.normalize();
 		this._ray.set(from, dir);
 		this._ray.far = dist;
-		const blockers = obstacleMeshesCached || obstacles.map(o=>o.mesh);
+		// use cached collision meshes
+		const blockers = obstacleMeshesCached || obstacles.map(o => o.mesh);
 		const hits = this._ray.intersectObjects(blockers, true);
 		return hits.length === 0;
 	}
 
-	update(dt, playerPos, obstacles, obstacleMeshesCached, opts = {}) {
-		const { grenades = [], skill = 1.0, playerMoving = false, difficultyMultiplier = 1.0 } = opts;
-		// adaptasi interval berdasarkan difficulty/skill: makin sulit -> think lebih sering
-		this.nextThink -= dt;
-		const thinkInterval = Math.max(0.04, this._thinkIntervalBase / (0.8 + 0.5 * difficultyMultiplier + 0.4 * (skill-1)));
-		const doHeavyThink = (this.nextThink <= 0);
-		if (doHeavyThink) this.nextThink = thinkInterval;
-		const pos = this.mesh.position;
-		const target = this._tmpVec.set(playerPos.x, pos.y, playerPos.z);
+	update(dt, playerPos, obstacles, obstacleMeshes, opts = {}) {
+		if (this._dead) return { contact: false, shoot: false, acc: 0 };
 
-		const toPlayer = this._tmpVec2.copy(target).sub(pos);
-		const dist = toPlayer.length();
-		if (dist > 0.0001) toPlayer.normalize();
+		// Config/Opts
+		const { grenades = [], skill = 1.0, playerMoving = false, difficultyMultiplier = 1.0, spatialHash, playerVelocity } = opts;
 
-		let avoid = this._tmpVec.clone().set(0,0,0);
-		// obstacle avoidance is relatively cheap compared to raycasts; keep every frame but simple
-		for (const o of obstacles) {
-			const b = o.mesh.position;
-			const half = o.half;
-			const dx = Math.max(Math.abs(pos.x - b.x) - half.x, 0);
-			const dz = Math.max(Math.abs(pos.z - b.z) - half.z, 0);
-			const d = Math.hypot(dx, dz);
-			if (d < this.radius + 0.6) {
-				const nx = pos.x - b.x;
-				const nz = pos.z - b.z;
-				const len = Math.hypot(nx, nz) || 1;
-				avoid.x += nx / len;
-				avoid.z += nz / len;
+		// 1. Perception & Prediction (Leading Shot)
+		// Assume bullet speed ~ 100 or immediate? If hitscan, leading is weird, but we simulate 'tracking'.
+		// Let's assume a virtual delay for realism.
+		const distToPlayer = this.mesh.position.distanceTo(playerPos);
+		const leadTime = distToPlayer / 60; // arbitrary speed
+		const predictedPos = playerPos.clone();
+		if (playerVelocity) {
+			predictedPos.add(playerVelocity.clone().multiplyScalar(leadTime));
+		}
+
+		// Use spatial hash if available
+		const collisionCandidates = (spatialHash) ? spatialHash.query(this.mesh.position, 4.0) : obstacles;
+
+		// 2. State Decision (Behavior Tree Lite)
+		// States: 'hunt', 'cover', 'flank', 'evade'
+
+		// Check health for Cover
+		if (this.health < 30 && distToPlayer < 20) {
+			this.state = 'cover';
+		} else if (distToPlayer < 8 && this.state !== 'cover') {
+			this.state = 'evade'; // Too close
+		} else if (distToPlayer > 15 && this._hasLineOfSight(playerPos, obstacles, obstacleMeshes)) {
+			// Occasionally flank
+			if (Math.random() < 0.01) this.state = 'flank';
+			else if (this.state !== 'flank') this.state = 'hunt';
+		} else {
+			if (this.state === 'evade' && distToPlayer > 12) this.state = 'hunt'; // Reset evade
+		}
+
+		// Collision
+		const nextPos = this.mesh.position.clone().add(this.velocity.clone().multiplyScalar(dt));
+
+		// Simple collision against obstacles
+		for (const o of collisionCandidates) {
+			if (o.type === 'road') continue;
+			const dx = Math.abs(nextPos.x - o.mesh.position.x) - o.half.x - 0.4;
+			const dz = Math.abs(nextPos.z - o.mesh.position.z) - o.half.z - 0.4;
+			if (dx < 0 && dz < 0) {
+				if (dx > dz) nextPos.x -= (nextPos.x > o.mesh.position.x ? dx : -dx);
+				else nextPos.z -= (nextPos.z > o.mesh.position.z ? dz : -dz);
 			}
 		}
+		this.mesh.position.copy(nextPos);
 
-		// Reaksi granat: menjauh singkat
-		let nearestGrenadeD = Infinity;
-		for (const g of grenades) {
-			if (!g.alive || !g.mesh) continue;
-			const d = g.mesh.position.distanceTo(pos);
-			if (d < nearestGrenadeD) nearestGrenadeD = d;
-		}
-		if (nearestGrenadeD < 6) { this.evadeTimer = Math.max(this.evadeTimer, 0.5); }
-		if (this.health < 30 && dist < 8) { this.evadeTimer = Math.max(this.evadeTimer, 0.4); }
+		// Movement Logic based on State
+		const moveDir = new THREE.Vector3();
 
-		// Update LOS & last seen
-		let hasLOS = this._lastHasLOS;
-		if (doHeavyThink) {
-			hasLOS = this._hasLineOfSight(target, obstacles, obstacleMeshesCached);
-			this._lastHasLOS = hasLOS;
-			if (hasLOS) this.lastSeenPos.copy(target);
-		}
+		if (this.state === 'cover') {
+			// Find Cover (Object between me and player)
+			// Or rather, Object where Player - Object - Me
+			// Simplest: Find nearest obstacle, hide behind it relative to player
+			let bestCover = null;
+			let bestDist = Infinity;
 
-		// Gerak: evasion > hunt > strafe
-		const dir = toPlayer.add(avoid.multiplyScalar(0.8)).normalize();
-		this.strafeTimer -= dt;
-		if (this.strafeTimer <= 0) { this.strafeTimer = 0.6 + Math.random()*0.7; this.strafeDir *= -1; }
-		if (this.evadeTimer > 0) {
-			this.evadeTimer -= dt;
-			// lari menjauh dari player/granat
-			const away = target.clone().sub(pos).setY(0).normalize().multiplyScalar(-1);
-			pos.x += away.x * (this.speed*1.4) * dt;
-			pos.z += away.z * (this.speed*1.4) * dt;
-		} else if (!hasLOS && dist < 35) {
-			// Investigate ke last seen
-			const toLast = this._tmpVec2.copy(this.lastSeenPos).sub(pos).setY(0);
-			if (toLast.lengthSq() > 0.01) {
-				toLast.normalize();
-				pos.x += toLast.x * this.speed * dt;
-				pos.z += toLast.z * this.speed * dt;
-			}
-			// if low HP try to find nearby cover
-			if (this.health < 45) {
-				let nearestObs = null; let nd = Infinity;
-				for (const o of obstacles || []) { try { const d = o.mesh.position.distanceTo(pos); if (d < nd) { nd = d; nearestObs = o; } } catch(_){} }
-				if (nearestObs && nd < 18) {
-					const dirToObs = nearestObs.mesh.position.clone().sub(pos).setY(0).normalize().multiplyScalar(0.85);
-					pos.x += dirToObs.x * this.speed * dt * 1.2; pos.z += dirToObs.z * this.speed * dt * 1.2;
+			for (const o of collisionCandidates) {
+				if (o.type === 'road' || o.type === 'floor') continue;
+				const d = this.mesh.position.distanceTo(o.mesh.position);
+				if (d < bestDist && d > 2) { // Don't pick one I'm standing IN 
+					const dirToCover = o.mesh.position.clone().sub(playerPos).normalize();
+					const coverPos = o.mesh.position.clone().add(dirToCover.multiplyScalar(o.half.x + 1.5)); // Crude
+					// Check if coverPos is reachable/safe? 
+					bestDist = d;
+					bestCover = coverPos;
 				}
 			}
-		} else if (dist > 6) {
-			// Flanking behaviour: if somewhat close and has LOS, more aggressive flanking in groups
-			const flankChance = (hasLOS && dist < 28) ? 0.18 + Math.min(0.42, (1 - (Math.min(6, obstacles.length||0) / 12))) : 0.08;
-			if (hasLOS && dist < 28 && Math.random() < flankChance) {
-				const right = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize();
-				// choose side based on strafeDir
-				const flankDir = right.multiplyScalar(this.strafeDir * 0.8).add(avoid.multiplyScalar(0.4)).normalize();
-				pos.x += flankDir.x * this.speed * 0.9 * dt;
-				pos.z += flankDir.z * this.speed * 0.9 * dt;
+
+			if (bestCover) {
+				moveDir.copy(bestCover.sub(this.mesh.position)).normalize();
 			} else {
-				pos.x += dir.x * this.speed * dt;
-				pos.z += dir.z * this.speed * dt;
+				// Panic, run away
+				moveDir.copy(this.mesh.position.clone().sub(playerPos).normalize());
 			}
-			// micro-coordination: if many enemies nearby, one of them will become bolder (higher fire rate)
-			try {
-				const nearby = (obstacles && obstacles.length) ? obstacles : this._tmpNearbyCount || 0;
-				if (this._aggrTimer === undefined) this._aggrTimer = 0;
-				this._aggrTimer -= dt;
-				if (this._aggrTimer <= 0 && Math.random() < 0.06) { this._aggrTimer = 1.2; this.shootCooldown = Math.max(0.12, this.shootCooldown * 0.75); }
-			} catch(_){}
-		} else if (dist > 2.2) {
-			const right = new THREE.Vector3(-dir.z, 0, dir.x);
-			pos.x += right.x * this.speed * 0.6 * dt * this.strafeDir;
-			pos.z += right.z * this.speed * 0.6 * dt * this.strafeDir;
+		}
+		else if (this.state === 'flank') {
+			// Move perpendicular
+			const toP = playerPos.clone().sub(this.mesh.position).normalize();
+			moveDir.set(-toP.z, 0, toP.x); // Right
+			if (this.strafeDir < 0) moveDir.negate();
+			// Add slight forward
+			moveDir.add(toP.multiplyScalar(0.3)).normalize();
+		}
+		else if (this.state === 'evade') {
+			// Run away
+			moveDir.copy(this.mesh.position.clone().sub(playerPos).normalize());
+		}
+		else {
+			// Hunt / Default
+			moveDir.copy(predictedPos.clone().sub(this.mesh.position).normalize());
+			// Stop if too close (maintain engagement distance)
+			if (distToPlayer < 10) moveDir.multiplyScalar(0.0); // Stand ground/strafe
 		}
 
-		this.mesh.lookAt(target);
+		// Apply obstacle avoidance (Steering)
+		const avoid = new THREE.Vector3();
+		let neighborCount = 0;
+		for (const o of collisionCandidates) {
+			const d = this.mesh.position.distanceTo(o.mesh.position);
+			const safeR = Math.max(o.half.x, o.half.z) + 0.8;
+			if (d < safeR) {
+				const push = this.mesh.position.clone().sub(o.mesh.position).normalize();
+				avoid.add(push);
+				neighborCount++;
+			}
+		}
+		if (neighborCount > 0) moveDir.add(avoid.normalize().multiplyScalar(1.5)).normalize();
 
-		let didContact = dist < 1.2;
-		let shoot = false; let acc = 0.6;
-		// akurasi dasar dipengaruhi skill dan jarak
-		const nearFactor = THREE.MathUtils.clamp((35 - dist)/35, 0, 1);
-		// akurasi juga dipengaruhi oleh difficultyMultiplier
-		acc = 0.35 + 0.5*nearFactor + 0.18*(skill-1) + 0.12*(difficultyMultiplier-1);
-		// gerak pemain menurunkan akurasi sedikit
-		if (playerMoving) acc *= 0.88;
+		// Apply Movement
+		this.mesh.position.x += moveDir.x * this.speed * dt;
+		this.mesh.position.z += moveDir.z * this.speed * dt;
+
+
+		// Logic Update (Think)
+		this.nextThink -= dt;
+		const thinkInterval = Math.max(0.04, this._thinkIntervalBase / (0.8 + 0.5 * difficultyMultiplier + 0.4 * (skill - 1)));
+		const doHeavyThink = (this.nextThink <= 0);
+		if (doHeavyThink) this.nextThink = thinkInterval;
+
+		let hasLOS = this._lastHasLOS;
+		if (doHeavyThink) {
+			hasLOS = this._hasLineOfSight(playerPos, obstacles, obstacleMeshes);
+			this._lastHasLOS = hasLOS;
+			if (hasLOS) this.lastSeenPos.copy(playerPos);
+		}
+
+		// Strafe Logic (Randomize when hunting)
+		this.strafeTimer -= dt;
+		if (this.strafeTimer <= 0) {
+			this.strafeTimer = 0.5 + Math.random() * 1.5;
+			this.strafeDir *= -1;
+		}
+		if (this.state === 'hunt' && distToPlayer < 25 && hasLOS) {
+			// Strafe perpendicular
+			const toP = playerPos.clone().sub(this.mesh.position).normalize();
+			const right = new THREE.Vector3(-toP.z, 0, toP.x).multiplyScalar(this.strafeDir);
+			this.mesh.position.add(right.multiplyScalar(this.speed * 0.6 * dt));
+		}
+
+		// Look At Predicted Position (Smart Aim)
+		this.mesh.lookAt(predictedPos);
+
+		// Shooting Logic
+		let didContact = distToPlayer < 1.2;
+		let shoot = false;
+
+		// Accuracy Calculation (Decreases with distance, improved by skill)
+		// Error Margin: 0 = perfect, 1 = terrible
+		// Base error 0.1, + distance/100, - skill effect
+		const baseAcc = 0.95 + (skill * 0.05); // High skill = better base
+		let acc = baseAcc - (distToPlayer * 0.015) + (difficultyMultiplier * 0.05);
+		acc = THREE.MathUtils.clamp(acc, 0.2, 0.98);
+		if (playerMoving) acc *= 0.9; // Harder to hit moving target
+		if (this.state === 'cover') acc *= 0.5; // Blind firing from cover?
+
 		const now = performance.now() / 1000;
-		// cooldown adaptif (sedikit lebih agresif saat dekat)
-		// lebih agresif di difficulty tinggi
-		this.shootCooldown = Math.max(0.18, this.baseShootCooldown - 0.25*nearFactor - 0.12*(skill-1) - 0.08*(difficultyMultiplier-1));
-		if (dist >= 6 && dist <= 35 && hasLOS) {
+		this.shootCooldown = Math.max(0.15, this.baseShootCooldown - (skill * 0.1) - (difficultyMultiplier * 0.1));
+
+		if (distToPlayer <= 40 && hasLOS) {
 			if (now - this.lastShoot > this.shootCooldown) {
 				this.lastShoot = now;
 				shoot = true;
-				// peluang burst: cepatkan next shot sedikit
-				if (Math.random() < 0.35) { this.lastShoot -= 0.15; }
+				// Burst variability
+				if (Math.random() < 0.4) this.lastShoot -= 0.1;
 			}
 		}
-		// LOD: jika jauh dari player, tampilkan low-detail untuk hemat GPU
+		// ... (LOD and Marker logic same as before) ...
 		try {
 			const lodDist = 40;
-			if (this.mesh && this.mesh.userData) {
-				const high = this.mesh.userData._high;
-				const low = this.mesh.userData._low;
-				if (high && low) {
-					if (dist > lodDist) { high.visible = false; low.visible = true; }
-					else { high.visible = true; low.visible = false; }
-				}
+			const high = this.mesh.userData._high;
+			const low = this.mesh.userData._low;
+			if (high && low) {
+				if (distToPlayer > lodDist) { high.visible = false; low.visible = true; }
+				else { high.visible = true; low.visible = false; }
 			}
-		} catch(_) {}
-		// update marker (scale/visibility) untuk membantu pemain melihat musuh
+		} catch (_) { }
+
 		try {
-			const m = (this.mesh && this.mesh.userData) ? this.mesh.userData._marker : null;
+			const m = this.mesh.userData._marker;
 			if (m) {
 				m.visible = true;
-				// scale sedikit lebih besar saat jauh agar mudah terlihat
-				const s = THREE.MathUtils.clamp(0.6 * (1 + (dist / 40)), 0.45, 1.3);
+				const s = THREE.MathUtils.clamp(0.6 * (1 + (distToPlayer / 40)), 0.45, 1.3);
 				m.scale.setScalar(s);
 			}
-		} catch(_) {}
+		} catch (_) { }
+
 		return { contact: didContact, shoot, acc };
 	}
 
 	dispose(scene) {
+		// Shared resources (geometry/material) are NOT disposed here because they are static
 		scene.remove(this.mesh);
-		this.mesh.traverse((obj) => {
-			if (obj.geometry) obj.geometry.dispose();
-			if (obj.material) {
-				if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-				else obj.material.dispose();
-			}
-		});
 	}
 } 

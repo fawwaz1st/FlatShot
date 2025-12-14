@@ -1,474 +1,365 @@
-* { box-sizing: border-box; }
-html, body { height: 100%; overflow: hidden; }
-body {
+/* --- GLOBAL & RESET --- */
+:root {
+	--c-neon: #00f0ff;
+	--c-white: #ffffff;
+	--c-dark: #0a0a0a;
+	--font-main: 'Rajdhani', sans-serif;
+}
+
+* {
 	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	width: 100vw;
+	height: 100vh;
+	overflow: hidden;
 	background: #000;
-	color: #fff;
-	font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-	overscroll-behavior: none;
+	font-family: var(--font-main);
+	color: var(--c-white);
 }
 
-/* OVERRIDE: stronger overlay (full black) and higher stacking to fully cover HUD before game starts */
-.overlay {
+/* --- BACKGROUND CANVAS --- */
+#canvas-container {
 	position: fixed;
-	inset: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: rgba(0,0,0,0.98); /* near-solid black to hide HUD behind */
-	z-index: 60; /* above HUD (5) and most UI elements */
-}
-
-/* specific skill select needs to sit above most transient overlays */
-#skillSelect.overlay, #skillSelect { z-index: 120; background: rgba(0,0,0,0.96); }
-#menu { z-index: 60; }
-
-/* tone down decorative ambient so background appears truly dark */
-.menu-ambient { opacity: 0.08; pointer-events: none; }
-
-/* compact the main menu card for tighter layout */
-.menu-card {
-	width: min(88vw, 680px);
-	padding: 16px;
-	border-radius: 12px;
-	background: rgba(18,18,22,0.98);
-	box-shadow: 0 8px 26px rgba(0,0,0,0.65);
-	border: 1px solid rgba(255,255,255,0.06);
-	backdrop-filter: blur(4px);
-	text-align: center;
-}
-.menu-card h1 { margin: 0 0 8px; font-size: 32px; }
-.menu-card h2 { margin: 0 0 8px; font-size: 26px; }
-.menu-card p { margin: 0 0 16px; color: #cdd3e0; }
-.menu-card .subtitle { margin: -4px 0 10px; color: #8fb3ff; font-weight: 600; }
-.menu-card .micro { margin-top: 10px; font-size: 12px; color: #8aa0b8; opacity: 0.9; }
-
-/* make settings grid more compact and denser */
-.menu-grid {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(120px, 1fr));
-	gap: 8px;
-	margin: 8px 0 6px;
-	text-align: left;
-	font-size: 13px;
-}
-.menu-grid label { gap: 4px; font-size: 13px; color: #9aa6bf; }
-.menu-grid select, .menu-grid input[type=range] {
+	top: 0;
+	left: 0;
 	width: 100%;
-	background: rgba(0,0,0,0.22);
-	border: 1px solid rgba(255,255,255,0.06);
-	border-radius: 8px;
-	padding: 6px;
-	accent-color: #30cfd0;
-	color: #fff;
-	font-size: 13px;
+	height: 100%;
+	z-index: -1;
 }
-.menu-grid select option { color:#000; background:#fff; }
 
-/* compact menu actions/buttons */
-.menu-actions { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
-.menu-card button { padding: 10px 14px; border-radius: 8px; font-size: 14px; }
-.menu-card button.secondary { padding: 8px 12px; border-radius: 8px; }
-.menu-card button:active { transform: translateY(1px); }
-
-.hud {
-	position: fixed;
-	top: 12px;
-	right: 12px;
-	left: auto;
-	transform: none;
-	padding: 8px;
+/* --- MAIN MENU WRAPPER --- */
+#flatshot-ui {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
 	pointer-events: none;
-	z-index: 5;
-	text-shadow: 0 2px 4px rgba(0,0,0,0.6);
-	max-width: calc(50% - 48px);
+	/* Let clicks pass through empty spaces */
 	display: flex;
 	flex-direction: column;
-	align-items: flex-end;
-	gap: 8px;
-}
-.hud-row { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; justify-content: center; flex-wrap: nowrap; }
-.hud-row > div { background: rgba(10,12,18,0.5); padding: 6px 10px; border-radius: 10px; flex: 0 0 auto; white-space: nowrap; margin-bottom: 6px; border:1px solid rgba(255,255,255,0.06); box-shadow: 0 6px 16px rgba(0,0,0,0.3); font-size:13px; }
-
-/* HUD icons */
-.hud-icon { width:16px; height:16px; margin-right:6px; }
-.pill-label { margin-right:6px; color:#cdd3e0; font-weight:600; font-size:13px; }
-
-/* wave pulse animation */
-@keyframes hudPulse { 0% { transform: translateY(0) scale(1); box-shadow: 0 6px 18px rgba(0,0,0,0.25); } 30% { transform: translateY(-4px) scale(1.04); box-shadow: 0 12px 26px rgba(48,207,208,0.16); } 100% { transform: translateY(0) scale(1); box-shadow: 0 6px 18px rgba(0,0,0,0.25); } }
-.pill-wave.pulse { animation: hudPulse .6s ease-out; border-color: rgba(48,207,208,0.18); }
-
-/* ensure icon spacing in small HUD */
-.hud .pill { display:inline-flex; align-items:center; gap:6px; }
-
-.crosshair {
-	position: fixed;
-	left: 50%; top: 50%;
-	width: 24px; height: 24px;
-	transform: translate(-50%, -50%);
-	z-index: 6;
-}
-/* Crosshair diamond modern */
-.crosshair-diamond { position: relative; }
-.crosshair-diamond::before,
-.crosshair-diamond::after {
-	content: "";
-	position: absolute;
-	left: 50%; top: 50%;
-	transform: translate(-50%, -50%) rotate(45deg);
-	background: #ffffff;
-	border-radius: 1px;
-}
-.crosshair-diamond::before { width: 10px; height: 10px; opacity: 0.9; box-shadow: 0 0 8px rgba(255,255,255,0.4); }
-.crosshair-diamond::after { width: 2px; height: 2px; background: #30cfd0; box-shadow: 0 0 10px rgba(48,207,208,0.7); }
-
-.crosshair-plus { position: relative; width: 22px; height: 22px; }
-.crosshair-plus::before, .crosshair-plus::after { content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); background:#fff; border-radius:1px; }
-.crosshair-plus::before { width: 18px; height: 2px; box-shadow: 0 0 8px rgba(255,255,255,0.4); }
-.crosshair-plus::after { width: 2px; height: 18px; box-shadow: 0 0 8px rgba(255,255,255,0.4); }
-
-.crosshair-dot { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; transform: translate(-50%, -50%); border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.7); z-index: 6; }
-
-.hud-bar { position: relative; width: auto; min-width: 120px; max-width: 220px; height: 14px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.35); }
-.hud-bar .fill { position:absolute; left:0; top:0; bottom:0; border-radius: 999px; transition: width .2s ease; z-index: 0; }
-.hud-bar.hp .fill { background: linear-gradient(90deg, #ff6b6b, #f94144); }
-.hud-bar.ammo .fill { background: linear-gradient(90deg, #62c8ff, #3a86ff); box-shadow: inset 0 -4px 8px rgba(0,0,0,0.16); border-right: 1px solid rgba(255,255,255,0.06); }
-/* Hanya posisikan span langsung anak .hud-bar secara absolut (outer wrapper),
-   agar inner spans (mis. #ammo dan #reserve) tetap inline dan tidak tertimpa */
-.hud-bar > span { position:absolute; left:10px; top:50%; transform:translateY(-50%); font-size:12px; text-shadow: 0 2px 4px rgba(0,0,0,0.7); z-index: 2; display: inline-flex; align-items: center; gap: 6px; }
-/* Reset posisi untuk inner span jika ada nested spans (contoh: <span id="ammoWrap"><span id="ammo">..</span>/<span id="reserve">..</span></span>) */
-.hud-bar span span { position: static; transform: none; left: auto; top: auto; }
-
-.grenades { display:flex; gap:6px; align-items:center; }
-.grenades::before { content:""; display:inline-block; width: 12px; height:12px; border-radius:2px; background:#9ae66e; box-shadow:0 0 8px rgba(154,230,110,0.6); margin-right:4px; }
-.grenades .dot { width:10px; height:10px; border-radius:50%; background:#9ae66e; box-shadow:0 0 6px rgba(154,230,110,0.7); }
-
-.hidden { display: none; }
-
-.pill { background: rgba(10,12,18,0.5); padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 6px 16px rgba(0,0,0,0.3); }
-.pill-hp { background: linear-gradient(180deg, rgba(220,53,69,0.18), rgba(10,12,18,0.5)); }
-.pill-ammo { background: linear-gradient(180deg, rgba(96,180,255,0.16), rgba(10,12,18,0.5)); border: 1px solid rgba(58,134,255,0.12); }
-.pill-grenade { background: linear-gradient(180deg, rgba(154,230,110,0.18), rgba(10,12,18,0.5)); }
-.pill-score { background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(10,12,18,0.5)); }
-.pill-allies { background: linear-gradient(180deg, rgba(143,179,255,0.18), rgba(10,12,18,0.5)); }
-
-.transition { position: fixed; inset: 0; background: #000; z-index: 20; opacity: 0; pointer-events: none; transition: opacity .35s ease; }
-.transition.show { opacity: 1; pointer-events: auto; } 
-@keyframes reloadPulse { 0%{ transform: translate(-50%,-50%) scale(0.6); opacity: 0.9;} 80%{ transform: translate(-50%,-50%) scale(1.3); opacity: 0.2;} 100%{ transform: translate(-50%,-50%) scale(1.4); opacity: 0;}}
-.reloadfx { position: fixed; left:50%; top:50%; width: 48px; height:48px; transform: translate(-50%,-50%); border:2px solid #30cfd0; border-radius:50%; z-index:7; pointer-events:none; opacity:0; }
-.reloadfx.play { animation: reloadPulse .5s ease-out 1; } 
-
-@keyframes floatGlow { 0%,100%{ transform: translateY(-4px) scale(1); opacity:.2;} 50%{ transform: translateY(4px) scale(1.1); opacity:.35; } }
-.menu-ambient { position:absolute; inset:0; overflow:hidden; pointer-events:none; }
-.menu-ambient span { position:absolute; width:120px; height:120px; background: radial-gradient(closest-side, rgba(48,207,208,0.35), rgba(48,207,208,0)); border-radius:50%; filter: blur(8px); animation: floatGlow 6s ease-in-out infinite; }
-.menu-ambient span:nth-child(1){ left:10%; top:20%; animation-delay:0s; }
-.menu-ambient span:nth-child(2){ left:72%; top:18%; animation-delay:.7s; }
-.menu-ambient span:nth-child(3){ left:20%; top:70%; animation-delay:1.1s; }
-.menu-ambient span:nth-child(4){ left:60%; top:72%; animation-delay:1.6s; }
-.menu-ambient span:nth-child(5){ left:85%; top:55%; animation-delay:2.1s; }
-.menu-ambient span:nth-child(6){ left:35%; top:40%; animation-delay:2.6s; }
-.menu-ambient span:nth-child(7){ left:78%; top:82%; animation-delay:3.1s; }
-.menu-ambient span:nth-child(8){ left:8%; top:80%; animation-delay:3.6s; }
-.menu-ambient span:nth-child(9){ left:48%; top:12%; animation-delay:4.1s; }
-.menu-ambient span:nth-child(10){ left:90%; top:20%; animation-delay:4.6s; }
-
-@keyframes logoPulse { 0%,100%{ text-shadow: 0 0 0 rgba(48,207,208,0); } 50%{ text-shadow: 0 0 22px rgba(48,207,208,0.45);} }
-.logo-anim { animation: logoPulse 3.4s ease-in-out infinite; } 
-
-.menu-tabs { display:flex; gap:8px; justify-content:center; margin: 10px 0; }
-.menu-tabs button { padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#fff; cursor:pointer; }
-.menu-tabs button.active { background: linear-gradient(180deg, #30cfd0, #330867); border-color: transparent; box-shadow: 0 6px 14px rgba(48,207,208,0.35); }
-.menu-panels { position: relative; min-height: 160px; }
-.panel { position: absolute; inset:0; opacity:0; transform: translateX(20px); transition: all .25s ease; pointer-events: none; }
-#panelOptions { overflow:auto; max-height: 360px; }
-/* Sembunyikan visual scrollbar (tetap scrollable) */
-#panelOptions { scrollbar-width: none; -ms-overflow-style: none; }
-#panelOptions::-webkit-scrollbar { display: none; }
-#panelAbout { overflow:auto; max-height: 360px; scrollbar-width: none; -ms-overflow-style: none; }
-#panelAbout::-webkit-scrollbar { display: none; }
-.panel.show { opacity:1; transform: translateX(0); pointer-events: auto; }
-
-.countdown { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background: rgba(0,0,0,0.6); z-index:15; }
-.countdown span { font-size: 120px; font-weight: 900; color:#fff; text-shadow:0 8px 28px rgba(0,0,0,0.6); }
-/* Pastikan countdown tidak tampil saat ada kelas .hidden meski aturan .countdown didefinisikan setelah .hidden */
-.countdown.hidden { display: none; }
-
-.shot-indicator { position: fixed; left:50%; top:50%; width:120px; height:120px; transform: translate(-50%,-50%); border-radius:50%; pointer-events:none; z-index:7; opacity:0; transition: opacity .12s linear; will-change: transform, opacity; }
-.shot-indicator.visible { opacity: 1; }
-.shot-indicator::after { content:""; position:absolute; left:50%; top:0; width:2px; height:14px; background:#ff6b6b; transform: translateX(-50%); box-shadow:0 0 8px rgba(255,107,107,0.8); } 
-
-.hit-vignette { position:fixed; inset:0; pointer-events:none; z-index:8; background: radial-gradient(200px 200px at 50% 50%, rgba(255,0,0,0), rgba(0,0,0,0)) , radial-gradient(800px 500px at 50% 50%, rgba(255,0,0,0.0), rgba(0,0,0,0.0)), linear-gradient(0deg, rgba(0,0,0,0), rgba(0,0,0,0)); box-shadow: inset 0 0 180px 60px rgba(255,60,60,0.0); transition: box-shadow .12s ease, background .12s ease; }
-.hit-vignette.show { box-shadow: inset 0 0 220px 80px rgba(255,60,60,0.38); } 
-
-@keyframes toastIn { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-@keyframes toastOut { from { transform: translate(-50%, 0); opacity: 1; } to { transform: translate(-50%, 20px); opacity: 0; } }
-.weapon-toast { position: fixed; left:50%; bottom:26px; transform: translateX(-50%); background: rgba(10,12,18,0.75); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 12px; z-index:8; pointer-events:none; display:none; box-shadow:0 10px 24px rgba(0,0,0,0.45); }
-.weapon-toast.show { display:block; animation: toastIn .18s ease-out, toastOut .24s ease-in .9s forwards; }
-.weapon-toast .label { font-weight:700; color:#fff; }
-.weapon-toast .sub { font-size:12px; color:#a8b2c6; margin-left:6px; } 
-
-.killstreak-toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; padding:8px 14px; border-radius:10px; z-index:9; pointer-events:none; display:none; box-shadow:0 10px 24px rgba(0,0,0,0.45); }
-.killstreak-toast.show { display:block; animation: toastIn .18s ease-out, toastOut .3s ease-in 1.2s forwards; }
-.powerups { position: fixed; right: 12px; bottom: 18px; display:flex; gap:8px; z-index:8; }
-.powerups .pu { background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); padding:6px 10px; border-radius:999px; font-size:12px; color:#fff; box-shadow:0 6px 16px rgba(0,0,0,0.3);} 
-
-/* Skill selection: contain and center cards; prevent overflow */
-.skill-card-wrap { max-width: 820px; margin: 0 auto; padding: 10px 8px; overflow: hidden; }
-.skill-grid { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; align-items: stretch; justify-items: center; justify-content: center; }
-@media (max-width: 880px) { .skill-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
-@media (max-width: 560px) { .skill-grid { grid-template-columns: 1fr; } }
-
-/* compact, consistent skill card */
-.skill-card {
-	position: relative;
-	padding: 12px 14px;
-	border-radius: 12px;
-	background: linear-gradient(180deg, rgba(10,12,16,0.96), rgba(14,16,20,1));
-	border:1px solid rgba(255,255,255,0.04);
-	cursor: pointer;
-	overflow: hidden;
-	box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-	min-width: 0;
-	width:100%;
-	max-width: 340px; /* prevent cards from growing too wide */
-	display:flex;
-	align-items:center;
-	min-height: 86px; /* consistent row height */
-}
-.skill-card .card-body{ display:flex; gap:10px; align-items:center; flex:1; }
-.skill-card .icon{ font-size:24px; width:48px; height:48px; display:flex; align-items:center; justify-content:center; border-radius:8px; }
-.skill-card .info h3{ font-size:15px; margin:0; }
-.skill-card .info p{ font-size:13px; margin:0; color:#c9d4e6; }
-
-/* reduce hover overshoot for compact layout */
-.skill-card:hover, .skill-card.hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 18px 46px rgba(0,0,0,0.7); }
-.skill-card:active, .skill-card.selected { transform: translateY(-1px) scale(1.01); box-shadow: 0 14px 36px rgba(0,0,0,0.65); }
-
-/* subtle badge tweak for compact card */
-.fancy-skill-card .badge{ margin-left:8px; padding:4px 8px; font-size:12px; }
-
-/* selected checkmark fine-tune */
-.skill-card .checkmark { right:8px; top:8px; width:26px; height:26px; border-radius:13px; }
-
-/* selected check overlay */
-.skill-card .checkmark { position:absolute; right:10px; top:10px; width:28px; height:28px; border-radius:14px; background: linear-gradient(180deg,#30cfd0,#2a9db3); display:flex; align-items:center; justify-content:center; color:#062022; font-weight:800; box-shadow:0 8px 20px rgba(48,207,208,0.12); opacity:0; transform: scale(0.8); transition: transform .22s ease, opacity .22s ease; pointer-events:none; }
-.skill-card.selected .checkmark { opacity:1; transform: scale(1); }
-
-/* minimal ring outline for accessibility when focused */
-.skill-card:focus { outline: 3px solid rgba(48,207,208,0.12); outline-offset:6px; }
-
-/* keep visual-only animations using opacity/transform to be cheap */
-.confetti-wrap, .pick-spark { will-change: transform, opacity; }
-
-/* prevent text clipping: limit title to 2 lines and body to 3 lines with ellipsis */
-.fancy-skill-card .info h3{
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.fancy-skill-card .info p{
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
+	padding: 60px;
 }
 
-/* Pause menu enhancements */
-.pause-overlay { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; z-index:40; pointer-events:none; }
-.pause-overlay.hidden { display:none; }
-.pause-overlay .pause-panel { pointer-events:auto; }
-.pause-panel { width: min(80vw, 720px); padding: 20px; border-radius:12px; background: linear-gradient(180deg, rgba(6,8,10,0.6), rgba(6,8,10,0.85)); border:1px solid rgba(255,255,255,0.06); box-shadow: 0 20px 60px rgba(0,0,0,0.7); pointer-events:auto; text-align:center; }
-.pause-panel h2{ margin:0 0 8px; font-size:28px; }
-.pause-panel .sub { color:#a8b2c6; margin-bottom:12px; }
-
-/* Countdown visual tweaks */
-.countdown { backdrop-filter: blur(6px); }
-.countdown span { color: #ffd166; text-shadow: 0 10px 40px rgba(255,200,120,0.12); font-family: 'Inter', system-ui, sans-serif; }
-
-/* small audio/pause hint */
-.pause-hint { font-size:13px; color:#cdd3e0; margin-top:8px; } 
-
-/* blur & dim saat paused */
-body.paused canvas, body.paused .menu-card, body.paused #skillSelect, body.paused #skillGrid, body.paused .skill-card {
-	filter: blur(6px) saturate(0.85) contrast(0.95);
-	transition: filter .28s ease, opacity .28s ease;
-	pointer-events: none;
+/* --- HEADER --- */
+.game-header {
+	margin-bottom: 60px;
+	pointer-events: auto;
 }
-body.paused .hud, body.paused .crosshair { opacity: 0.28; transition: opacity .22s ease; }
 
-/* picked card micro animation */
-.card-picked { transform: scale(0.98); opacity: 0.98; transition: transform .18s cubic-bezier(.2,.9,.3,1), opacity .18s ease; box-shadow: 0 18px 40px rgba(255,170,80,0.14); }
-
-/* temporary spark when selecting */
-.pick-spark { position:fixed; z-index:60; mix-blend-mode:screen; border-radius:50%; pointer-events:none; }
-
-/* menu action buttons used in pause overlay */
-.menu-action { appearance:none; border:none; padding:10px 14px; border-radius:10px; cursor:pointer; background:linear-gradient(180deg,#30cfd0,#330867); color:#fff; font-weight:700; box-shadow:0 8px 20px rgba(48,207,208,0.14); }
-.menu-action.secondary { background:transparent; border:1px solid rgba(255,255,255,0.08); color:#fff; box-shadow:none; }
-
-/* ensure countdown overlay above pause overlay */
-.countdown { z-index:50; } 
-
-/* confetti styles */
-.confetti { width:8px; height:12px; border-radius:2px; pointer-events:none; }
-.confetti-wrap { position: fixed; inset:0; pointer-events:none; }
-
-/* countdown flash */
-.countdown.flash { animation: countdownFlash .22s ease; }
-@keyframes countdownFlash { 0%{ transform: scale(1); filter: drop-shadow(0 0 0 rgba(255,200,120,0)); } 50%{ transform: scale(1.06); filter: drop-shadow(0 12px 36px rgba(255,200,120,0.18)); } 100%{ transform: scale(1); filter: drop-shadow(0 0 0 rgba(0,0,0,0)); } } 
-
-/* CS-like chat overlay */
-.chat-overlay { display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
-.chat-overlay #chatList { max-height: 220px; overflow: hidden; display:flex; flex-direction:column-reverse; }
-.chat-msg { display:flex; gap:8px; align-items:center; padding:6px 8px; border-radius:8px; background: linear-gradient(180deg, rgba(10,12,18,0.24), rgba(10,12,18,0.12)); box-shadow: 0 6px 14px rgba(0,0,0,0.35); }
-.chat-msg.player { border-left: 4px solid #ffd166; }
-.chat-msg.ally { border-left: 4px solid #38bdf8; }
-.chat-msg div { line-height:1.1; }
-.chat-overlay input { outline: none; }
-.chat-overlay .menu-action { padding:8px 10px; border-radius:8px; } 
-
-/* added compact advanced settings and preset button styles */
-.advanced-settings { border: 1px dashed rgba(255,255,255,0.04); padding: 8px; border-radius: 8px; background: rgba(8,10,14,0.4); }
-.advanced-settings summary { cursor: pointer; padding: 6px 8px; border-radius: 6px; background: rgba(255,255,255,0.02); font-weight:600; }
-.menu-action.small { padding:6px 8px; font-size:13px; border-radius:8px; }
-.pill-info { display:inline-block; padding:6px 10px; border-radius:12px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(10,12,18,0.5)); border:1px solid rgba(255,255,255,0.06); color:#cdd3e0; font-weight:600; font-size:13px; }
-/* ensure menu card not overflow */
-.menu-card { max-width: 760px; }
-/* small tweak to make icons crisp */
-.hud .pill { font-size:13px; } 
-
-/* weapon pill styles */
-.pill-weapon { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background: linear-gradient(180deg, rgba(12,14,22,0.7), rgba(10,12,18,0.6)); border:1px solid rgba(255,255,255,0.06); }
-#weaponIcon { font-size:16px; }
-.skill-cd { font-size:12px; color:#ffd166; margin-left:6px; font-weight:700; }
-/* small animation for cooldown flash */
-@keyframes cdFlash { 0%{ transform: scale(1); opacity:1 } 50%{ transform: scale(1.12); opacity:0.9 } 100%{ transform: scale(1); opacity:1 } }
-.skill-cd.cooling { animation: cdFlash .45s ease-in-out infinite; } 
-
-/* ensure no horizontal scroll on small screens */
-html, body { max-width: 100%; overflow-x: hidden; } 
-
-/* VFX & Icon polish for skill cards and Start button */
-#playBtn {
-	appearance: none;
-	border: none;
-	padding: 12px 18px;
-	border-radius: 10px;
-	background: linear-gradient(180deg, #47f1e6, #2b89d9);
-	color: #06111a;
+.game-header h1 {
+	font-size: 5rem;
 	font-weight: 800;
-	font-size: 15px;
-	box-shadow: 0 8px 30px rgba(46,193,200,0.28), inset 0 -2px 6px rgba(0,0,0,0.12);
-	transition: transform .12s ease, box-shadow .18s ease, filter .12s ease;
-}
-#playBtn:hover { transform: translateY(-3px); box-shadow: 0 18px 46px rgba(46,193,200,0.26), inset 0 -2px 6px rgba(0,0,0,0.12); filter: saturate(1.05); }
-#playBtn:active { transform: translateY(-1px) scale(.998); box-shadow: 0 10px 26px rgba(46,193,200,0.18); }
-
-/* subtle glass stroke for primary button in dark card */
-.menu-card button.primary { border: 1px solid rgba(255,255,255,0.06); }
-
-/* skill icon styling */
-.skill-card .icon {
-	flex: 0 0 auto;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 52px;
-	height: 52px;
-	border-radius: 10px;
-	background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-	box-shadow: inset 0 -6px 10px rgba(0,0,0,0.35), 0 8px 20px rgba(0,0,0,0.35);
-	font-size: 22px;
-	transition: transform .18s cubic-bezier(.2,.9,.25,1), box-shadow .18s ease, filter .18s ease;
-}
-.skill-card .icon .emoji { display:inline-block; transform: translateY(0); }
-
-@keyframes iconPulse {
-	0% { transform: scale(1) translateY(0); filter: hue-rotate(0deg) brightness(1); }
-	50% { transform: scale(1.06) translateY(-2px); filter: hue-rotate(6deg) brightness(1.06); }
-	100% { transform: scale(1) translateY(0); filter: hue-rotate(0deg) brightness(1); }
+	letter-spacing: 2px;
+	line-height: 1;
+	text-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
+	margin-bottom: 0;
 }
 
-/* icon glow on hover */
-.skill-card:hover .icon { transform: translateY(-4px) scale(1.04); box-shadow: 0 22px 46px rgba(46,193,200,0.06), inset 0 -6px 14px rgba(0,0,0,0.35); animation: iconPulse .9s ease-in-out 1; }
-.skill-card.selected .icon { box-shadow: 0 26px 64px rgba(46,193,200,0.12), inset 0 -8px 18px rgba(0,0,0,0.36); transform: translateY(-2px) scale(1.02); }
+.game-header p {
+	font-size: 1.2rem;
+	color: var(--c-neon);
+	letter-spacing: 8px;
+	margin-left: 6px;
+	opacity: 0.8;
+}
 
-/* micro sparkle (pseudo-element) */
-.skill-card .icon::after {
+/* --- ACCORDION MENU --- */
+.accordion-menu {
+	display: flex;
+	flex-direction: column;
+	gap: 15px;
+	width: 350px;
+	pointer-events: auto;
+}
+
+.menu-item {
+	display: flex;
+	flex-direction: column;
+}
+
+.menu-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	text-align: left;
+	font-family: var(--font-main);
+	font-size: 2.5rem;
+	font-weight: 700;
+	color: rgba(255, 255, 255, 0.5);
+	transition: all 0.3s ease;
+	padding: 5px 0;
+	position: relative;
+	text-transform: uppercase;
+}
+
+.menu-btn:hover,
+.menu-btn.active {
+	color: var(--c-white);
+	text-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+	transform: translateX(15px);
+}
+
+.menu-btn::before {
 	content: '';
 	position: absolute;
-	top: -6px; right: -6px;
-	width: 12px; height: 12px; border-radius: 6px;
-	background: radial-gradient(circle at 30% 30%, #fff6a9, #ffd166 40%, rgba(255,138,0,0.0) 60%);
-	opacity: 0; transform: scale(.6); transition: opacity .22s ease, transform .22s ease;
-}
-.skill-card:hover .icon::after { opacity: 1; transform: scale(1); }
-
-/* improve checkmark contrast when selected */
-.skill-card .checkmark { background: linear-gradient(180deg,#ffd166,#ff8a00); color:#08211a; box-shadow:0 8px 20px rgba(255,138,0,0.14); }
-
-/* small accessibility and cursor polish */
-.skill-card { cursor: pointer; }
-.skill-card:focus { box-shadow: 0 18px 36px rgba(46,193,200,0.08); }
-
-/* Reduce visual noise for small screens */
-@media (max-width: 560px) {
-	.skill-card .icon { width:44px; height:44px; font-size:20px; }
-	#playBtn { padding: 10px 14px; font-size: 14px; }
-} 
-
-/* Card internals: tidy up top/badge layout and left alignment for info */
-.skill-card { display: grid; grid-template-columns: 68px 1fr; gap: 12px; align-items: center; }
-.card-top { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:4px 0; }
-.card-top .hex { width:36px; height:36px; border-radius:8px; background: linear-gradient(180deg, rgba(48,207,208,0.06), rgba(48,207,208,0.02)); box-shadow: inset 0 -6px 8px rgba(0,0,0,0.25); }
-.card-top .badge { font-size:11px; padding:4px 6px; border-radius:8px; background: rgba(255,255,255,0.03); color:#cfeef6; font-weight:700; }
-
-/* Left-align card info for better reading and clamp text more tightly */
-.fancy-skill-card .info { text-align:left; }
-.fancy-skill-card .info h3 { color: #fff; font-weight:800; letter-spacing:0.2px; margin-bottom:6px; }
-.fancy-skill-card .info p { color: #bfcadd; opacity:0.95; margin:0; }
-
-/* Ensure icon column uses compact stacking and consistent centering */
-.skill-card .icon { margin:0; align-self:center; justify-self:center; }
-
-/* Play button: white text for better contrast */
-#playBtn { color: #ffffff; text-shadow: 0 2px 6px rgba(0,0,0,0.45); }
-
-/* Compact settings icons (JS akan menyisipkan .opt-icon inside labels) */
-.menu-grid label { display: flex; align-items: center; gap:8px; }
-.menu-grid label .opt-icon { width:22px; height:22px; display:inline-grid; place-items:center; font-size:14px; border-radius:6px; background: rgba(255,255,255,0.02); color: #8fb3ff; box-shadow: inset 0 -2px 4px rgba(0,0,0,0.35); }
-
-/* Make presets row tighter */
-.menu-grid > div[style] { gap:6px; }
-
-/* Slightly reduce heavy shadows to improve performance on low-end devices */
-.skill-card { box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
-.skill-card:hover { box-shadow: 0 14px 34px rgba(0,0,0,0.6); } 
-
-/* Outer glow for skill cards on hover / selected */
-.skill-card {
-	transition: box-shadow .18s ease, transform .12s ease, border-color .12s ease;
-}
-.skill-card:hover, .skill-card.hover {
-	transform: translateY(-4px) scale(1.02);
-	box-shadow: 0 10px 40px rgba(0,0,0,0.6), 0 0 18px rgba(48,207,208,0.095), 0 0 40px rgba(48,207,208,0.06) inset;
-	border-color: rgba(48,207,208,0.14);
-}
-.skill-card.selected {
-	transform: translateY(-2px) scale(1.02);
-	box-shadow: 0 18px 60px rgba(0,0,0,0.65), 0 0 28px rgba(48,207,208,0.16), 0 0 56px rgba(48,207,208,0.08) inset;
-	border-color: rgba(48,207,208,0.18);
+	left: -25px;
+	top: 50%;
+	width: 0;
+	height: 3px;
+	background: var(--c-neon);
+	transition: width 0.3s ease;
 }
 
-/* subtle outer glow outline for accessibility focus */
-.skill-card:focus {
+.menu-btn:hover::before,
+.menu-btn.active::before {
+	width: 18px;
+}
+
+/* --- SUBMENU TRANSITIONS --- */
+.submenu {
+	max-height: 0;
+	overflow: hidden;
+	opacity: 0;
+	transition: max-height 0.4s cubic-bezier(0.2, 1, 0.3, 1), opacity 0.4s ease;
+	background: linear-gradient(90deg, rgba(0, 240, 255, 0.05), transparent);
+	border-left: 2px solid var(--c-neon);
+	margin-left: 5px;
+}
+
+.submenu.open {
+	max-height: 400px;
+	opacity: 1;
+	margin-top: 10px;
+	margin-bottom: 20px;
+}
+
+.submenu-inner {
+	padding: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 15px;
+}
+
+/* --- SUBMENU BUTTONS --- */
+.sub-btn {
+	background: rgba(255, 255, 255, 0.05);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--c-white);
+	padding: 15px 20px;
+	font-family: var(--font-main);
+	font-weight: 600;
+	font-size: 1.1rem;
+	cursor: pointer;
+	transition: all 0.2s ease;
+	text-align: left;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+.sub-btn:hover {
+	background: var(--c-neon);
+	color: #000;
+	border-color: var(--c-neon);
+	transform: translateX(5px);
+	box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+}
+
+/* --- CONTROLS --- */
+.control-group {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.control-group label {
+	font-size: 0.9rem;
+	color: #aaa;
+	letter-spacing: 2px;
+	font-weight: 600;
+}
+
+input[type=range] {
+	width: 100%;
+	accent-color: var(--c-neon);
+	height: 6px;
+	background: rgba(255, 255, 255, 0.1);
+	border-radius: 3px;
 	outline: none;
-	box-shadow: 0 6px 26px rgba(0,0,0,0.45), 0 0 18px rgba(48,207,208,0.08);
-	border-color: rgba(48,207,208,0.12);
 }
 
-/* ensure glow doesn't overflow modal rounding badly */
-.skill-card, .skill-grid { will-change: transform, box-shadow; } 
+.about-text {
+	font-size: 1rem;
+	line-height: 1.6;
+	color: #ccc;
+	font-style: italic;
+}
+
+.about-text strong {
+	color: var(--c-neon);
+	font-style: normal;
+}
+
+/* --- HUD --- */
+.hud {
+	position: absolute;
+	pointer-events: none;
+	width: 100%;
+	height: 100%;
+	top: 0;
+	left: 0;
+}
+
+.hud.hidden {
+	display: none;
+}
+
+.crosshair {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 4px;
+	height: 4px;
+	background: #00f0ff;
+	border-radius: 50%;
+	box-shadow: 0 0 4px #00f0ff;
+	transform: translate(-50%, -50%);
+}
+
+.hud-stats {
+	position: absolute;
+	bottom: 40px;
+	left: 40px;
+	display: flex;
+	gap: 40px;
+}
+
+.stat-box {
+	font-size: 2.5rem;
+	font-weight: 800;
+	color: #fff;
+	text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+}
+
+.stat-box span {
+	color: var(--c-neon);
+}
+
+/* --- NEW: VOTING UI & COUNTDOWN --- */
+#voting-ui {
+	font-family: 'Rajdhani', sans-serif;
+	animation: fade-in 0.5s;
+}
+
+.vote-card {
+	position: relative;
+	transition: all 0.3s;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-height: 200px;
+}
+
+.vote-card:hover {
+	transform: translateY(-5px);
+	box-shadow: 0 5px 15px rgba(0, 240, 255, 0.2);
+}
+
+.vote-token-container {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	align-content: flex-start;
+	gap: 2px;
+	margin-top: 10px;
+	width: 100%;
+	padding: 5px;
+	background: rgba(0, 0, 0, 0.3);
+	border-radius: 4px;
+	flex-grow: 1;
+}
+
+.vote-token {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	display: inline-block;
+	margin: 2px;
+	box-shadow: 0 0 4px currentColor;
+}
+
+.token-red {
+	background-color: #ff0055;
+	color: #ff0055;
+}
+
+.token-blue {
+	background-color: #00f0ff;
+	color: #00f0ff;
+}
+
+.token-stack {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+}
+
+/* Countdown Overlay */
+#countdown-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	z-index: 3000;
+	font-size: 15rem;
+	font-weight: 800;
+	color: #fff;
+	text-shadow: 0 0 50px #fff;
+	opacity: 0;
+	transition: opacity 0.2s;
+}
+
+#countdown-overlay.show {
+	opacity: 1;
+}
+
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+
+	to {
+		opacity: 1;
+	}
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+	#flatshot-ui {
+		padding: 30px;
+	}
+
+	.game-header h1 {
+		font-size: 3rem;
+	}
+
+	.accordion-menu {
+		width: 100%;
+	}
+
+	.submenu.open {
+		max-height: 500px;
+	}
+}

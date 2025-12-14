@@ -3,6 +3,12 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { PostFXShader } from './game/postProcess.js';
+import { MenuScene } from './scenes/MenuScene.js';
+import { VotingScene } from './scenes/VotingScene.js';
+import { SpatialHash } from './game/spatialHash.js';
+import { TextureGen } from './game/textureGen.js';
 
 import { Enemy } from './modules/enemy.js';
 import { Ally } from './modules/ally.js';
@@ -32,8 +38,8 @@ export default class Game {
 	constructor() {
 		this.clock = new THREE.Clock();
 		this.scene = new THREE.Scene();
-		this.scene.background = new THREE.Color(0x0a0a0f);
-		this.scene.fog = new THREE.FogExp2(0x0a0a0f, 0.02);
+		this.scene.background = new THREE.Color(0x000000);
+		this.scene.fog = new THREE.FogExp2(0x000000, 0.025);
 
 		this.renderer = new THREE.WebGLRenderer({ antialias: true });
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -49,6 +55,11 @@ export default class Game {
 		this.composer.addPass(new RenderPass(this.scene, this.camera));
 		this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.7, 0.25, 0.85);
 		this.composer.addPass(this.bloom);
+
+		this.postFX = new ShaderPass(PostFXShader);
+		this.postFX.uniforms['resolution'].value = new THREE.Vector2(window.innerWidth, window.innerHeight);
+		this.composer.addPass(this.postFX);
+
 		// deteksi perangkat low-memory untuk opsi performa otomatis
 		try {
 			const mem = navigator.deviceMemory || 8;
@@ -62,16 +73,16 @@ export default class Game {
 				this.config.particles = Math.min(this.config.particles, 120);
 				this.config.drawDistance = Math.min(this.config.drawDistance, 500);
 				// turunkan pixel ratio & ukuran renderer untuk mengurangi GPU/VRAM
-				try { const pr = Math.min(window.devicePixelRatio || 1, 1.0) * this.config.renderScale; this.renderer.setPixelRatio(pr); this.renderer.setSize(Math.floor(window.innerWidth * this.config.renderScale), Math.floor(window.innerHeight * this.config.renderScale)); this.composer.setSize(Math.floor(window.innerWidth * this.config.renderScale), Math.floor(window.innerHeight * this.config.renderScale)); } catch(_){ }
+				try { const pr = Math.min(window.devicePixelRatio || 1, 1.0) * this.config.renderScale; this.renderer.setPixelRatio(pr); this.renderer.setSize(Math.floor(window.innerWidth * this.config.renderScale), Math.floor(window.innerHeight * this.config.renderScale)); this.composer.setSize(Math.floor(window.innerWidth * this.config.renderScale), Math.floor(window.innerHeight * this.config.renderScale)); } catch (_) { }
 			}
-		} catch(_) { this._lowEnd = false; }
+		} catch (_) { this._lowEnd = false; }
 
 		this.hud = new HUD();
 		this.audio = new AudioFX();
 
 		this.input = this.createInputState();
 		this.targetFps = 60; // default
-		this._accum = 0; this._minFrameTime = 1/this.targetFps;
+		this._accum = 0; this._minFrameTime = 1 / this.targetFps;
 		this.player = {
 			velocity: new THREE.Vector3(),
 			speedWalk: 5,
@@ -127,80 +138,98 @@ export default class Game {
 		this._fovBase = this.camera.fov;
 		this._activeMuzzleLight = null;
 		this._impactDecals = [];
-		this._switchAnim = { active:false, t:0, dir:1, duration:0.18, target:'pistol', onComplete:null };
-		this._deathAnim = { active:false, t:0 };
+		this._switchAnim = { active: false, t: 0, dir: 1, duration: 0.18, target: 'pistol', onComplete: null };
+		this._deathAnim = { active: false, t: 0 };
 		this._spawnLocked = false; // mencegah spawn beruntun dalam frame yang sama
 
-		this.setupLights();
-		this.setupWorld();
-		this.createWeapon();
+		// Fix: Initialize runtime arrays/objects to prevent 'undefined' access
+		this._sceneLights = [];
+		this.weapon = {}; // Placeholder to prevent access errors before createWeapon()
+
+		// this.setupLights();
+		// Defer world loading until start() or explicitly called.
+		// Instead, load Menu Scene by default.
+		this.menuScene = new MenuScene(this);
+		this.currentSceneMode = 'menu';
+		this._worldLoaded = false; // GUARD: World not loaded yet
+		this._gameInitialized = false; // GUARD: Heavy game assets not loaded
+		this.menuScene.enter();
+
+		// this.setupWorld(); // Moved to loadGameLevel
+		// this.createWeapon(); // Moved/Called later
 		this.setupEvents();
 		// spawnInitialAllies dipanggil setelah manager spawn di-attach (dipindahkan ke bawah)
-		
+
 		this._selectedAllyIndex = -1; // index ally terpilih, -1 = all
-		try { attachAI(this); } catch(_) {}
+		try { attachAI(this); } catch (_) { }
 		// attach controllers synchronously
-		try { attachPlayerController(this); } catch(e){ console.error('[Game] attachPlayerController error', e); }
-		try { attachWeaponController(this); } catch(e){ console.error('[Game] attachWeaponController error', e); }
-		try { attachPoolController(this); } catch(e){ console.error('[Game] attachPoolController error', e); }
-		try { attachUIController(this); } catch(e){ console.error('[Game] attachUIController error', e); }
-		try { attachEffectsController(this); } catch(e){ console.error('[Game] attachEffectsController error', e); }
-		try { attachPickupController(this); } catch(e){ console.error('[Game] attachPickupController error', e); }
+		try { attachPlayerController(this); } catch (e) { console.error('[Game] attachPlayerController error', e); }
+		try { attachWeaponController(this); } catch (e) { console.error('[Game] attachWeaponController error', e); }
+		try { attachPoolController(this); } catch (e) { console.error('[Game] attachPoolController error', e); }
+		try { attachUIController(this); } catch (e) { console.error('[Game] attachUIController error', e); }
+		try { attachEffectsController(this); } catch (e) { console.error('[Game] attachEffectsController error', e); }
+		try { attachPickupController(this); } catch (e) { console.error('[Game] attachPickupController error', e); }
 		this.createChatOverlayUI();
-		this.createAmbientParticles();
-		this._initPools();
-		this.createSunSprite();
+
+		// GUARD: Defer heavy world assets until game starts
+		// These will be called in initializeGameAssets() when game starts
+		// this.createAmbientParticles(); // Deferred
+		// this._initPools(); // Deferred  
+		// this.createSunSprite(); // Deferred
+
 		// attach HUD controller
-		try { attachHudController(this); } catch(e){ console.error('[Game] attachHudController error', e); }
+		try { attachHudController(this); } catch (e) { console.error('[Game] attachHudController error', e); }
 		// initial HUD flush requested after controller attaches
-		try { this.markHudDirty && this.markHudDirty(); } catch(_){ }
-		this.powerups = { shield:0, damage:0, speed:0 };
-		this._streak = { count:0, timer:0 };
+		try { this.markHudDirty && this.markHudDirty(); } catch (_) { }
+		this.powerups = { shield: 0, damage: 0, speed: 0 };
+		this._streak = { count: 0, timer: 0 };
 		// Wave system removed; use time-based difficulty
 		this._playTimeSeconds = this._playTimeSeconds || 0;
 		this._playTimeAccum = this._playTimeAccum || 0;
-		try { attachFallbackSpawner(this); } catch(_) {}
-		try { attachInputManager(this); } catch(_) {}
-		try { attachUIManager(this); } catch(_) {}
-		try { attachSpawnManager(this); } catch(_) {}
-		// pastikan spawn manager sudah terpasang sebelum memanggil spawnInitialAllies
-		try { if (typeof this.spawnInitialAllies === 'function') { this.spawnInitialAllies(); } } catch(_) {}
-		try { attachEnemyManager(this); } catch(_) {}
-		try { attachGameLoop(this); } catch(_) {}
-		try { attachPoolManager(this); } catch(_) {}
+
+		// GUARD: Defer spawn managers until game starts
+		try { attachFallbackSpawner(this); } catch (_) { }
+		try { attachInputManager(this); } catch (_) { }
+		try { attachUIManager(this); } catch (_) { }
+		// Spawn manager and allies will be initialized when game starts
+		// try { attachSpawnManager(this); } catch (_) { } // Deferred
+		// try { if (typeof this.spawnInitialAllies === 'function') { this.spawnInitialAllies(); } } catch (_) { } // Deferred
+		try { attachEnemyManager(this); } catch (_) { }
+		try { attachGameLoop(this); } catch (_) { }
+		try { attachPoolManager(this); } catch (_) { }
 		this._inGameMusic = { playing: false, intervalId: null, nextChangeAt: 0 };
-		this._inGamePlaylist = ['bgm_loop','synth','chill','electro','cinematic']; // names (synth will fallback)
-		this.startInGameMusicRotator = function(){
-			try{
+		this._inGamePlaylist = ['bgm_loop', 'synth', 'chill', 'electro', 'cinematic']; // names (synth will fallback)
+		this.startInGameMusicRotator = function () {
+			try {
 				if (!this.audio) return;
 				this._inGameMusic.playing = true;
-				const scheduleNext = (delayMs)=>{ this._inGameMusic.nextChangeAt = performance.now() + delayMs; };
+				const scheduleNext = (delayMs) => { this._inGameMusic.nextChangeAt = performance.now() + delayMs; };
 				// pick initial
-				const pickAndPlay = ()=>{
-					try{
+				const pickAndPlay = () => {
+					try {
 						// choose available sample from playlist or synthesized fallback
-						const choices = this._inGamePlaylist.filter(x=>!!x);
-						let name = choices[Math.floor(Math.random()*choices.length)];
+						const choices = this._inGamePlaylist.filter(x => !!x);
+						let name = choices[Math.floor(Math.random() * choices.length)];
 						// ensure synthesized sample exists
-						try { if (!this.audio._samples[name]) { this.audio.synthesizeSample(name); } } catch(_){}
-						try { this.audio.stopLoopSample('bgm_game'); } catch(_){}
-						try { this.audio.playLoopSample(name, { volume: 0.12 }); } catch(_) { try{ this.audio.playLoopSample('bgm_loop', { volume:0.12 }); } catch(_){} }
+						try { if (!this.audio._samples[name]) { this.audio.synthesizeSample(name); } } catch (_) { }
+						try { this.audio.stopLoopSample('bgm_game'); } catch (_) { }
+						try { this.audio.playLoopSample(name, { volume: 0.12 }); } catch (_) { try { this.audio.playLoopSample('bgm_loop', { volume: 0.12 }); } catch (_) { } }
 						// next change in 60-180s
-						const next = 60000 + Math.floor(Math.random()*120000);
+						const next = 60000 + Math.floor(Math.random() * 120000);
 						scheduleNext(next);
-					} catch(_){}
+					} catch (_) { }
 				};
 				pickAndPlay();
 				// interval that checks timing
-				this._inGameMusic.intervalId = setInterval(()=>{
-					try{ if (!this._inGameMusic.playing) return; if (performance.now() >= (this._inGameMusic.nextChangeAt || 0)) { pickAndPlay(); } } catch(_){}
+				this._inGameMusic.intervalId = setInterval(() => {
+					try { if (!this._inGameMusic.playing) return; if (performance.now() >= (this._inGameMusic.nextChangeAt || 0)) { pickAndPlay(); } } catch (_) { }
 				}, 3000);
-			} catch(_){}
+			} catch (_) { }
 		};
-		this.stopInGameMusicRotator = function(){ try{ this._inGameMusic.playing = false; if (this._inGameMusic.intervalId) { clearInterval(this._inGameMusic.intervalId); this._inGameMusic.intervalId = null; } try { this.audio.stopLoopSample('bgm_game'); } catch(_){} } catch(_){} };
+		this.stopInGameMusicRotator = function () { try { this._inGameMusic.playing = false; if (this._inGameMusic.intervalId) { clearInterval(this._inGameMusic.intervalId); this._inGameMusic.intervalId = null; } try { this.audio.stopLoopSample('bgm_game'); } catch (_) { } } catch (_) { } };
 	}
 
-	setAimAssistDegrees(deg){
+	setAimAssistDegrees(deg) {
 		this.config.aimAssistDeg = Math.max(0, Math.min(10, deg));
 	}
 
@@ -231,27 +260,27 @@ export default class Game {
 	}
 
 	// Graphic options
-	setFov(deg){
+	setFov(deg) {
 		this.config.fov = Math.max(50, Math.min(110, deg));
 		this.camera.fov = this.config.fov; this.camera.updateProjectionMatrix();
 		this._fovBase = this.config.fov;
 	}
-	setRenderScale(scale){
+	setRenderScale(scale) {
 		this.config.renderScale = Math.max(0.5, Math.min(1.25, scale));
 		const base = Math.min(window.devicePixelRatio, 2);
 		this.renderer.setPixelRatio(base * this.config.renderScale);
 		this.composer.setSize(window.innerWidth, window.innerHeight);
 	}
-	setFogDensity(d){ this.config.fogDensity = Math.max(0, Math.min(0.06, d)); this.scene.fog.density = this.config.fogDensity; }
-	setDrawDistance(dist){ this.config.drawDistance = Math.max(150, Math.min(1500, dist)); this.camera.far = this.config.drawDistance; this.camera.updateProjectionMatrix(); }
-	setParticles(count){
+	setFogDensity(d) { this.config.fogDensity = Math.max(0, Math.min(0.06, d)); this.scene.fog.density = this.config.fogDensity; }
+	setDrawDistance(dist) { this.config.drawDistance = Math.max(150, Math.min(1500, dist)); this.camera.far = this.config.drawDistance; this.camera.updateProjectionMatrix(); }
+	setParticles(count) {
 		this.config.particles = Math.max(0, Math.min(2000, Math.floor(count)));
 		if (this.particles) { this.scene.remove(this.particles); this.particles.geometry.dispose(); this.particles.material.dispose(); this.particles = null; }
 		if (this.config.particles > 0) this.createAmbientParticles();
 	}
-	applyGraphicsPreset(p){
+	applyGraphicsPreset(p) {
 		// low/medium/high/ultra
-		switch(p){
+		switch (p) {
 			case 'low': this.setRenderScale(0.7); this.setBloom(0.3); this.setFogDensity(0.01); this.setParticles(150); this.setDrawDistance(500); break;
 			case 'medium': this.setRenderScale(0.9); this.setBloom(0.5); this.setFogDensity(0.02); this.setParticles(300); this.setDrawDistance(600); break;
 			case 'high': this.setRenderScale(1.0); this.setBloom(0.7); this.setFogDensity(0.02); this.setParticles(400); this.setDrawDistance(800); break;
@@ -259,42 +288,42 @@ export default class Game {
 		}
 	}
 
-	applySkill(key){
+	applySkill(key) {
 		if (!key) return;
-		switch(key){
+		switch (key) {
 			case 'overcharge':
 				this.perks = this.perks || {};
-				this.perks.damageMult = Math.max(1.0, (this.perks.damageMult||1.0) * 1.5);
+				this.perks.damageMult = Math.max(1.0, (this.perks.damageMult || 1.0) * 1.5);
 				break;
 			case 'aegis':
 				this.perks = this.perks || {};
 				this.perks.shield = (this.perks.shield || 0) + 50;
 				break;
 			case 'adrenal':
-				this.player.speedWalk *= 1.35; this.player.speedRun *= 1.35; this.player.fireRate = (this.player.fireRate||7) * 1.25;
+				this.player.speedWalk *= 1.35; this.player.speedRun *= 1.35; this.player.fireRate = (this.player.fireRate || 7) * 1.25;
 				break;
 			case 'quickdraw':
 				this.perks = this.perks || {};
 				this.perks.reloadSpeedMult = 0.7; // reload faster
 				this.player.ammoReserve += 20; break;
 			case 'vigor':
-				this.player.health = Math.min(100 + 25, (this.player.health||100) + 25); this.player._maxHealth = (this.player._maxHealth||100) + 25; break;
+				this.player.health = Math.min(100 + 25, (this.player.health || 100) + 25); this.player._maxHealth = (this.player._maxHealth || 100) + 25; break;
 			case 'demolisher':
-				this.player.grenades = (this.player.grenades||0) + 1; this.perks = this.perks || {}; this.perks.grenadeDmg = (this.perks.grenadeDmg||1.0) * 1.3; break;
+				this.player.grenades = (this.player.grenades || 0) + 1; this.perks = this.perks || {}; this.perks.grenadeDmg = (this.perks.grenadeDmg || 1.0) * 1.3; break;
 			case 'scavenger':
-				this.perks = this.perks || {}; this.perks.scavenger = (this.perks.scavenger||0) + 1; break;
+				this.perks = this.perks || {}; this.perks.scavenger = (this.perks.scavenger || 0) + 1; break;
 			case 'marksman':
 				// buff allies accuracy
-				for (const a of (this.world.allies||[])) { try { a.accuracy = Math.min(0.99, (a.accuracy||0.7) * 1.4); } catch(_){} }
+				for (const a of (this.world.allies || [])) { try { a.accuracy = Math.min(0.99, (a.accuracy || 0.7) * 1.4); } catch (_) { } }
 				break;
 			case 'steelskin':
-				this.perks = this.perks || {}; this.perks.steelskin = (this.perks.steelskin||0) + 1; break;
+				this.perks = this.perks || {}; this.perks.steelskin = (this.perks.steelskin || 0) + 1; break;
 			case 'overwatch':
-				for (const a of (this.world.allies||[])) { try { a.accuracy = Math.min(0.98, (a.accuracy||0.7) * 1.12); } catch(_){} }
+				for (const a of (this.world.allies || [])) { try { a.accuracy = Math.min(0.98, (a.accuracy || 0.7) * 1.12); } catch (_) { } }
 				break;
 			default: break;
 		}
-		try { this.markHudDirty && this.markHudDirty(); } catch(_){}
+		try { this.markHudDirty && this.markHudDirty(); } catch (_) { }
 	}
 
 	createInputState() {
@@ -302,26 +331,258 @@ export default class Game {
 		return createInputState(this);
 	}
 
-	setupLights() {
-		const hemi = new THREE.HemisphereLight(0x6670ff, 0x111122, 0.35);
-		this.scene.add(hemi);
-		this.sun = new THREE.DirectionalLight(0xffffff, 0.9);
-		this.sun.position.set(10, 20, 10);
-		this.sun.castShadow = false;
-		this.scene.add(this.sun);
+	enterMenuLoop() {
+		if (!this.animating) {
+			this.animating = true;
+			this.loop();
+		}
 	}
 
-	setupWorld() {
-		const floorGeo = new THREE.PlaneGeometry(this.world.bounds * 4, this.world.bounds * 4, 1, 1);
-		const floorMat = new THREE.MeshStandardMaterial({ color: 0x0e1116, metalness: 0.12, roughness: 0.9 });
+	setupLights() {
+		if (this._sceneLights) {
+			this._sceneLights.forEach(l => this.scene.remove(l));
+		}
+		this._sceneLights = [];
+
+		// Updated Visuals: Hemisphere Light + Directional Light
+		const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+		this.scene.add(hemi);
+		this._sceneLights.push(hemi);
+
+		this.sun = new THREE.DirectionalLight(0xffffff, 1.5);
+		this.sun.position.set(20, 50, 20);
+		this.sun.castShadow = true;
+		this.sun.shadow.mapSize.width = 2048;
+		this.sun.shadow.mapSize.height = 2048;
+		this.scene.add(this.sun);
+		this._sceneLights.push(this.sun);
+
+		// Ensure sun exists for loop.js
+	}
+
+	cleanupScene() {
+		console.log('[Game] Cleaning up scene...');
+
+		// 1. Dispose Level Objects
+		if (this._levelObjects) {
+			this._levelObjects.forEach(obj => {
+				this.scene.remove(obj);
+				if (obj.geometry) obj.geometry.dispose();
+				if (obj.material) {
+					if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+					else obj.material.dispose();
+				}
+			});
+			this._levelObjects = [];
+		}
+
+		// 2. Clear Entities (Enemies, Allies)
+		const clearEntity = (e) => {
+			if (e.mesh) {
+				this.scene.remove(e.mesh);
+				e.mesh.traverse(c => {
+					if (c.geometry) c.geometry.dispose();
+					if (c.material) {
+						if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+						else c.material.dispose();
+					}
+				});
+			}
+		};
+		if (this.world.enemies) this.world.enemies.forEach(clearEntity);
+		if (this.world.allies) this.world.allies.forEach(clearEntity);
+
+		this.world.enemies = [];
+		this.world.allies = [];
+		this.world.obstacles = [];
+		this.world.pickups = [];
+
+		// 3. Clear Lights
+		if (this._sceneLights) {
+			this._sceneLights.forEach(l => {
+				this.scene.remove(l);
+				if (l.dispose) l.dispose();
+			});
+			this._sceneLights = [];
+		}
+		this.sun = null;
+
+		// 4. Reset Flags
+		this._worldLoaded = false;
+
+		// 5. Cleanup Menu/Voting Scenes if active
+		if (this.menuScene) this.menuScene.exit();
+		if (this.votingScene) this.votingScene.exit();
+
+		// 6. Force GC hint (optional, Three.js handles mostly)
+		this.renderer.renderLists.dispose();
+	}
+
+	enterVoting() {
+		// Transition: Menu -> Voting
+		if (this.currentSceneMode === 'menu') {
+			this.menuScene.exit();
+		}
+		this.cleanupScene(); // Heavy cleanup
+
+		// Fix: Initialize arrays to prevent crash when pushing voting options
+		this.voteCandidates = [];
+		this.activeVotes = [];
+
+		this.currentSceneMode = 'voting';
+		this.votingScene = new VotingScene(this);
+		this.votingScene.enter();
+
+		// Add simple ambient light for voting phase
+		const amb = new THREE.AmbientLight(0xffffff, 0.5);
+		this.scene.add(amb);
+		this._sceneLights.push(amb);
+	}
+
+	enterGame(mode) {
+		console.log(`[Game] Entering Game with Mode: ${mode}`);
+		this.cleanupScene();
+		// Instead of immediately loading level, we start countdown
+		this.startCountdown(3, mode);
+	}
+
+	assignTeams() {
+		// Assign Player Team
+		this.player.team = (Math.random() > 0.5 ? 'RED' : 'BLUE');
+		console.log(`[Game] Player assigned to Team ${this.player.team}`);
+		// Store team config for spawning
+		this.teamConfig = {
+			player: this.player.team,
+			enemy: (this.player.team === 'RED' ? 'BLUE' : 'RED')
+		};
+	}
+
+	startCountdown(seconds, mode) {
+		// Create Overlay if not exists
+		let overlay = document.getElementById('countdown-overlay');
+		if (!overlay) {
+			overlay = document.createElement('div');
+			overlay.id = 'countdown-overlay';
+			document.body.appendChild(overlay);
+		}
+
+		overlay.textContent = seconds;
+		overlay.classList.add('show');
+
+		// Start Loading Level in Background
+		this._levelReady = false;
+
+		// Use Promise to track loading
+		const loadPromise = new Promise((resolve) => {
+			this.currentSceneMode = 'game'; // Prepare context
+			this.initializeGameAssets().then(() => {
+				this.loadGameLevel(mode); // Load geometry/etc
+				this._levelReady = true;
+				resolve();
+			});
+		});
+
+		let count = seconds;
+		const interval = setInterval(() => {
+			count--;
+			if (count > 0) {
+				overlay.textContent = count;
+				try { this.audio.click(); } catch (_) { }
+			} else {
+				// Wait for level to be ready
+				if (this._levelReady) {
+					clearInterval(interval);
+					overlay.classList.remove('show');
+					this.startLoop();
+				} else {
+					overlay.textContent = "LOADING...";
+				}
+			}
+		}, 1000);
+
+		// Safety check: if ready happens after count 0
+		const checkReady = setInterval(() => {
+			if (count <= 0 && this._levelReady) {
+				clearInterval(interval); // clear main timer
+				clearInterval(checkReady);
+				overlay.classList.remove('show');
+				this.startLoop();
+			}
+		}, 200);
+	}
+
+	startLoop() {
+		// Actually start gameplay logic
+		this.animating = true;
+		try { this.startNextWave(); } catch (_) { }
+		try { this._startTimeMs = performance.now() - ((this._playTimeSeconds || 0) * 1000); } catch (_) { this._startTimeMs = undefined; }
+		try { this.startInGameMusicRotator(); } catch (_) { }
+		this.loop();
+	}
+
+	// Fix: Missing method to lazy-load assets
+	// Fix: Missing method to lazy-load assets (Now returns Promise)
+	initializeGameAssets() {
+		if (this._gameInitialized) return Promise.resolve();
+		console.log("[Game] Initializing heavy assets...");
+		this.setupWorld();
+		this.createWeapon();
+		this._gameInitialized = true;
+		return Promise.resolve();
+	}
+
+	loadGameLevel() {
+		// Prevent double loading
+		if (this.currentSceneMode === 'game' && this._worldLoaded) return;
+		this.currentSceneMode = 'game';
+
+		// GUARD: Initialize game assets if not yet done
+		this.initializeGameAssets();
+
+		// Mark world as loading
+		this._worldLoaded = true;
+		console.log('[Game] Loading game level...');
+
+		// Initialize object tracker if not exists
+		this._levelObjects = [];
+
+		// Re-add game lights if they were removed or ensure they match
+		this.setupLights();
+
+		const bounds = this.world.bounds;
+
+		// Load World Geometry
+		const gridTex = TextureGen.createGrid(512, 512, '#30cfd0', '#2a2a35', 2);
+		const wallTex = TextureGen.createGrid(512, 512, '#ff0055', '#220a10', 2);
+
+		const floorGeo = new THREE.PlaneGeometry(bounds * 4, bounds * 4, 1, 1);
+		// Tiling texture
+		gridTex.repeat.set(80, 80);
+		const floorMat = new THREE.MeshStandardMaterial({
+			map: gridTex,
+			color: 0x888888,
+			roughness: 0.2,
+			metalness: 0.6,
+			emissive: 0x0a101a,
+			emissiveIntensity: 0.2
+		});
 		const floor = new THREE.Mesh(floorGeo, floorMat);
 		floor.rotation.x = -Math.PI / 2;
 		floor.receiveShadow = false;
 		floor.position.y = 0;
+		floor.name = 'level_floor';
 		this.scene.add(floor);
+		this._levelObjects.push(floor);
 
-		const bounds = this.world.bounds;
-		const wallMat = new THREE.MeshStandardMaterial({ color: 0x1b2330, metalness: 0.1, roughness: 0.9 });
+		wallTex.repeat.set(10, 2);
+		const wallMat = new THREE.MeshStandardMaterial({
+			map: wallTex,
+			color: 0xaaaaaa,
+			roughness: 0.2,
+			metalness: 0.8,
+			emissive: 0x220011,
+			emissiveIntensity: 0.4
+		});
 		const wallH = 10, wallT = 0.8;
 		const walls = [
 			new THREE.BoxGeometry(bounds * 2, wallH, wallT),
@@ -335,23 +596,26 @@ export default class Game {
 			new THREE.Mesh(walls[2], wallMat),
 			new THREE.Mesh(walls[3], wallMat)
 		];
-		wallMeshes[0].position.set(0, wallH/2, -bounds);
-		wallMeshes[1].position.set(0, wallH/2, bounds);
-		wallMeshes[2].position.set(-bounds, wallH/2, 0);
-		wallMeshes[3].position.set(bounds, wallH/2, 0);
+		wallMeshes[0].position.set(0, wallH / 2, -bounds);
+		wallMeshes[1].position.set(0, wallH / 2, bounds);
+		wallMeshes[2].position.set(-bounds, wallH / 2, 0);
+		wallMeshes[3].position.set(bounds, wallH / 2, 0);
+
 		for (let i = 0; i < wallMeshes.length; i++) {
 			const w = wallMeshes[i];
-			w.receiveShadow = false;
+			w.name = 'level_wall_' + i;
 			this.scene.add(w);
-			const halfX = (i < 2) ? bounds : (wallT * 0.5);
-			const halfZ = (i < 2) ? (wallT * 0.5) : bounds;
-			this.world.obstacles.push({ type: 'wall', mesh: w, half: new THREE.Vector3(halfX, 0, halfZ) });
+			this._levelObjects.push(w);
+			this.world.obstacles.push(new THREE.Box3().setFromObject(w));
 		}
 
-		// Elemen tambahan map: pilar & platform
-		const pillarMat = new THREE.MeshStandardMaterial({ color: 0x223042, roughness: 0.8, metalness: 0.05 });
-		// use InstancedMesh for pillars to reduce draw calls; keep lightweight obstacle proxies for collision
-		const pillarCount = 96; // increased density (was 64)
+		// Pillars
+		const pillarTex = TextureGen.createGrid(256, 256, '#30cfd0', '#000000', 4);
+		pillarTex.repeat.set(1, 4);
+		const pillarMat = new THREE.MeshStandardMaterial({
+			map: pillarTex, color: 0x444455, roughness: 0.3, metalness: 0.8, emissive: 0x001122, emissiveIntensity: 0.5
+		});
+		const pillarCount = 96;
 		const pillarGeo = new THREE.CylinderGeometry(0.8, 0.8, 1, 12);
 		const pillarInst = new THREE.InstancedMesh(pillarGeo, pillarMat, pillarCount);
 		let pi = 0;
@@ -361,24 +625,25 @@ export default class Game {
 			const x = Math.cos(a) * r;
 			const z = Math.sin(a) * r;
 			const h = 2 + Math.random() * 6;
-			const pos = new THREE.Vector3(x, h/2, z);
+			const pos = new THREE.Vector3(x, h / 2, z);
 			const m = new THREE.Matrix4();
 			const q = new THREE.Quaternion();
 			const s = new THREE.Vector3(1, h, 1);
 			m.compose(pos, q, s);
 			pillarInst.setMatrixAt(pi, m);
-			// obstacle proxy for gameplay (position + half)
-			this.world.obstacles.push({ type: 'pillar', mesh: { position: pos }, half: new THREE.Vector3(0.8, h/2, 0.8), instanceId: pi });
+			this.world.obstacles.push({ type: 'pillar', mesh: { position: pos }, half: new THREE.Vector3(0.8, h / 2, 0.8), instanceId: pi });
 			pi++;
 		}
 		pillarInst.instanceMatrix.needsUpdate = true;
-		pillarInst.frustumCulled = true;
 		this.scene.add(pillarInst);
-		// simpan referensi untuk adaptive culling
+		this._levelObjects.push(pillarInst);
 		this._pillarInst = pillarInst;
 
-		const platMat = new THREE.MeshStandardMaterial({ color: 0x182333, roughness: 0.9 });
-		// platforms as InstancedMesh
+		// Platforms
+		const platTex = TextureGen.createGrid(256, 256, '#00ffff', '#111111', 2);
+		const platMat = new THREE.MeshStandardMaterial({
+			map: platTex, color: 0x223344, roughness: 0.4, emissive: 0x001111, emissiveIntensity: 0.3
+		});
 		const platCount = 36;
 		const platGeo = new THREE.BoxGeometry(1, 1, 1);
 		const platInst = new THREE.InstancedMesh(platGeo, platMat, platCount);
@@ -387,25 +652,22 @@ export default class Game {
 			const w = 8 + Math.random() * 12;
 			const d = 8 + Math.random() * 12;
 			const y = 2 + Math.random() * 4;
-			const pos = new THREE.Vector3((Math.random()-0.5)*bounds*1.6, y, (Math.random()-0.5)*bounds*1.6);
+			const pos = new THREE.Vector3((Math.random() - 0.5) * bounds * 1.6, y, (Math.random() - 0.5) * bounds * 1.6);
 			const m = new THREE.Matrix4();
 			const q = new THREE.Quaternion();
 			const s = new THREE.Vector3(w, 0.6, d);
 			m.compose(pos, q, s);
 			platInst.setMatrixAt(pi2, m);
-			// proxy for physics/collision
-			this.world.obstacles.push({ type: 'platform', mesh: { position: pos }, half: new THREE.Vector3(w/2, 0.3, d/2), instanceId: pi2 });
+			this.world.obstacles.push({ type: 'platform', mesh: { position: pos }, half: new THREE.Vector3(w / 2, 0.3, d / 2), instanceId: pi2 });
 			pi2++;
 		}
 		platInst.instanceMatrix.needsUpdate = true;
-		platInst.frustumCulled = true;
 		this.scene.add(platInst);
-		// referensi untuk culling
+		this._levelObjects.push(platInst);
 		this._platInst = platInst;
 
-		// Tambah beberapa bangunan blok
+		// Buildings
 		const bmat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.85 });
-		// buildings as InstancedMesh
 		const buildingCount = 48;
 		const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
 		const buildingInst = new THREE.InstancedMesh(buildingGeo, bmat, buildingCount);
@@ -414,71 +676,103 @@ export default class Game {
 			const bw = 6 + Math.random() * 10;
 			const bh = 4 + Math.random() * 8;
 			const bd = 6 + Math.random() * 10;
-			const pos = new THREE.Vector3((Math.random()-0.5)*bounds*1.4, bh/2, (Math.random()-0.5)*bounds*1.4);
+			const pos = new THREE.Vector3((Math.random() - 0.5) * bounds * 1.4, bh / 2, (Math.random() - 0.5) * bounds * 1.4);
 			const m = new THREE.Matrix4();
 			const q = new THREE.Quaternion();
 			const s = new THREE.Vector3(bw, bh, bd);
 			m.compose(pos, q, s);
 			buildingInst.setMatrixAt(bi, m);
-			this.world.obstacles.push({ type: 'building', mesh: { position: pos }, half: new THREE.Vector3(bw/2, bh/2, bd/2), instanceId: bi });
+			this.world.obstacles.push({ type: 'building', mesh: { position: pos }, half: new THREE.Vector3(bw / 2, bh / 2, bd / 2), instanceId: bi });
 			bi++;
 		}
 		buildingInst.instanceMatrix.needsUpdate = true;
-		buildingInst.frustumCulled = true;
 		this.scene.add(buildingInst);
-		// referensi untuk culling
+		this._levelObjects.push(buildingInst);
 		this._buildingInst = buildingInst;
 
-		// Roads: long flat boxes to simulate streets
+		// Roads
 		const roadMat = new THREE.MeshStandardMaterial({ color: 0x111216, roughness: 0.9, metalness: 0.05 });
-		for (let i=0;i<10;i++){
-			const w = 6 + Math.random()*8; const l = this.world.bounds * (0.6 + Math.random()*0.6);
+		for (let i = 0; i < 10; i++) {
+			const w = 6 + Math.random() * 8; const l = bounds * (0.6 + Math.random() * 0.6);
 			const road = new THREE.Mesh(new THREE.BoxGeometry(l, 0.1, w), roadMat);
-			road.position.set((Math.random()-0.5)*this.world.bounds*0.6, 0.05, (Math.random()-0.5)*this.world.bounds*0.6);
+			road.position.set((Math.random() - 0.5) * bounds * 0.6, 0.05, (Math.random() - 0.5) * bounds * 0.6);
 			this.scene.add(road);
-			// mark road as non-collidable for player movement (visual only)
-			this.world.obstacles.push({ type:'road', mesh: { position: road.position }, half: new THREE.Vector3(l/2,0,w/2) });
+			this._levelObjects.push(road);
+			this.world.obstacles.push({ type: 'road', mesh: { position: road.position }, half: new THREE.Vector3(l / 2, 0, w / 2) });
 		}
 
-		// Stairs: procedural stepped boxes
+		// Stairs
 		const stairMat = new THREE.MeshStandardMaterial({ color: 0x1b2933, roughness: 0.85 });
-		for (let s=0;s<12;s++){
-			const sx = (Math.random()-0.5)*this.world.bounds*1.0; const sz = (Math.random()-0.5)*this.world.bounds*1.0;
-			const steps = 4 + Math.floor(Math.random()*6);
-			for (let k=0;k<steps;k++){
+		for (let s = 0; s < 12; s++) {
+			const sx = (Math.random() - 0.5) * bounds * 1.0; const sz = (Math.random() - 0.5) * bounds * 1.0;
+			const steps = 4 + Math.floor(Math.random() * 6);
+			for (let k = 0; k < steps; k++) {
 				const box = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 1.4), stairMat);
-				box.position.set(sx + k*0.9, 0.2 + k*0.4, sz);
+				box.position.set(sx + k * 0.9, 0.2 + k * 0.4, sz);
 				this.scene.add(box);
-				this.world.obstacles.push({ type:'stair', mesh: { position: box.position }, half: new THREE.Vector3(1.5, 0.2, 0.7) });
+				this._levelObjects.push(box);
+				this.world.obstacles.push({ type: 'stair', mesh: { position: box.position }, half: new THREE.Vector3(1.5, 0.2, 0.7) });
 			}
 		}
 
-		// cache obstacle meshes untuk optimisasi raycast
-		// ensure instanced meshes (render objects) are present too
-		this._obstacleMeshes = [];
-		// collect unique render meshes from obstacles: if mesh has real geometry use it, otherwise skip
+		// Initialize SpatialHash
+		this.spatialHash = new SpatialHash(bounds, 20);
 		for (const o of this.world.obstacles) {
-			if (o._renderMesh && this._obstacleMeshes.indexOf(o._renderMesh) === -1) this._obstacleMeshes.push(o._renderMesh);
+			this.spatialHash.insert(o);
 		}
-		// add our pillarInst and other actual meshes (platforms/buildings/walls)
-		// find objects in scene that are real meshes (Box/Cylinder) and include them
-		this.scene.traverse((obj) => {
-			if ((obj.isMesh || obj.isInstancedMesh) && obj.geometry) {
-				if (this._obstacleMeshes.indexOf(obj) === -1) this._obstacleMeshes.push(obj);
-			}
-		});
 
-		// wave system akan mulai ketika permainan benar-benar dimulai (dipanggil di start())
+		// Start enemy meshes map (for hit detection visual)
 		this._enemyMeshes = this.world.enemies.map(e => e.mesh);
- 		// prepare particle default adaptif berdasarkan device memory
- 		try { const mem = navigator.deviceMemory || 8; if (mem <= 4) this.config.particles = Math.min(this.config.particles, 120); else if (mem <= 8) this.config.particles = Math.min(this.config.particles, 300); } catch(_) {}
- 	}
+
+		// Create initial weapon if needed
+		this.createWeapon();
+	}
+
+	unloadGameLevel() {
+		// Destroy Level Objects
+		if (this._levelObjects) {
+			this._levelObjects.forEach(obj => {
+				this.scene.remove(obj);
+				if (obj.geometry) obj.geometry.dispose();
+				if (obj.material) obj.material.dispose();
+			});
+			this._levelObjects = [];
+		}
+
+		// Clear Enemies, Allies, Projectiles
+		if (this.world.enemies) this.world.enemies.forEach(e => { try { e.mesh && this.scene.remove(e.mesh); } catch (_) { } });
+		if (this.world.allies) this.world.allies.forEach(a => { try { a.mesh && this.scene.remove(a.mesh); } catch (_) { } });
+		// Reset Arrays
+		this.world.enemies = [];
+		this.world.allies = [];
+		this.world.pickups = [];
+		this.world.obstacles = [];
+		this.world.score = 0;
+		this._playTimeSeconds = 0;
+
+		if (this.player.weaponMesh) {
+			this.scene.remove(this.player.weaponMesh);
+			this.player.weaponMesh = null;
+		}
+
+		// Return to Menu State
+		this.currentSceneMode = 'menu';
+		this._worldLoaded = false;
+		if (this._sceneLights) {
+			this._sceneLights.forEach(l => this.scene.remove(l));
+			this._sceneLights = [];
+		}
+
+		if (this.menuScene) this.menuScene.enter();
+	}
+
+
 
 	startNextWave() {
 		try {
 			const impl = this.startNextWave; const proto = Object.getPrototypeOf(this).startNextWave;
 			if (impl && impl !== proto) return impl.call(this);
-		} catch(_){}
+		} catch (_) { }
 		// no-op fallback
 	}
 
@@ -486,7 +780,7 @@ export default class Game {
 		try {
 			const impl = this.updateWave; const proto = Object.getPrototypeOf(this).updateWave;
 			if (impl && impl !== proto) return impl.call(this, dt);
-		} catch(_){}
+		} catch (_) { }
 	}
 
 	createWeapon() {
@@ -539,9 +833,13 @@ export default class Game {
 	setupEvents() {
 		const el = this.renderer.domElement;
 		el.addEventListener('click', () => {
-			if (!this.controls.isLocked) {
+			if (this.currentSceneMode === 'game' && !this.controls.isLocked) {
 				this.controls.lock();
 				this.dispatchResumeHUD();
+				// Ensure AudioContext is resumed
+				if (this.audio && this.audio.context && this.audio.context.state === 'suspended') {
+					this.audio.context.resume();
+				}
 			}
 		});
 		this.controls.addEventListener('lock', () => {
@@ -556,14 +854,21 @@ export default class Game {
 				const isChatActive = chatEl && chatEl.style.display !== 'none' && (chatInput === document.activeElement || chatInput && chatInput.value !== undefined);
 				if (isChatActive) {
 					// hanya lakukan unfocus minor, jangan tampilkan menu pause
-					try { if (chatInput) chatInput.blur(); } catch(_){}
+					try { if (chatInput) chatInput.blur(); } catch (_) { }
 					return;
 				}
 				// normal behavior: pause to menu
 				this.pauseToMenu();
-			} catch(_) { try { this.pauseToMenu(); } catch(_){} }
+			} catch (_) { try { this.pauseToMenu(); } catch (_) { } }
 		});
 
+		window.addEventListener('blur', () => {
+			// Only pause if in-game. Menu mode continues running with animations.
+			if (this.currentSceneMode === 'game') {
+				try { this.pauseGameplay(); } catch (_) { }
+			}
+			// Menu mode: animations and particles continue uninterrupted
+		});
 		window.addEventListener('resize', () => {
 			this.camera.aspect = window.innerWidth / window.innerHeight;
 			this.camera.updateProjectionMatrix();
@@ -581,23 +886,12 @@ export default class Game {
 					if (typeof this._savedFps !== 'undefined') this.setFps(this._savedFps || 60);
 					this._savedFps = undefined;
 				}
-			} catch(_){}
+			} catch (_) { }
 		});
 		// chat toggle handled inside createChatOverlayUI (no blocking prompt)
 	}
 
-	start() {
-		if (!this.animating) {
-			this.animating = true;
-			// mulai gelombang pertama saat loop dimulai
-			try { this.startNextWave(); } catch(_) {}
-			// set start time reference untuk stopwatch HUD (jika ada akumulasi sebelumnya, pertahankan)
-			try { this._startTimeMs = performance.now() - ((this._playTimeSeconds || 0) * 1000); } catch(_) { this._startTimeMs = undefined; }
-			// start in-game music rotator
-			try { this.startInGameMusicRotator(); } catch(_){}
-			this.loop();
-		}
-	}
+
 
 	pauseToMenu() {
 		// gunakan CustomEvent agar caller bisa menentukan apakah ingin buka menu penuh atau hanya overlay ringan
@@ -610,15 +904,15 @@ export default class Game {
 		this._wasAnimating = this.animating;
 		this.animating = false;
 		// reset clock delta to avoid large dt on resume
-		try { this.clock.getDelta(); } catch(_) {}
+		try { this.clock.getDelta(); } catch (_) { }
 		// audio: duck music & play pause sfx
-		try { if (this.audio) { this.audio.duckBgm(0.25, 120); this.audio.menuClick && this.audio.menuClick(); } } catch(_) {}
+		try { if (this.audio) { this.audio.duckBgm(0.25, 120); this.audio.menuClick && this.audio.menuClick(); } } catch (_) { }
 		// bloom/VFX: increase bloom for pause feel (store old value)
-		try { this._bloomBeforePause = (this.bloom && this.bloom.strength) || 0; if (this.bloom) this.bloom.strength = Math.min(3.0, (this._bloomBeforePause || 0) + 0.9); } catch(_) {}
+		try { this._bloomBeforePause = (this.bloom && this.bloom.strength) || 0; if (this.bloom) this.bloom.strength = Math.min(3.0, (this._bloomBeforePause || 0) + 0.9); } catch (_) { }
 		// notify UI to apply pause overlay/vfx
-		try { window.dispatchEvent(new Event('game:paused')); } catch(_) {}
+		try { window.dispatchEvent(new Event('game:paused')); } catch (_) { }
 		// stop in-game music rotator
-		try { this.stopInGameMusicRotator(); } catch(_) {}
+		try { this.stopInGameMusicRotator(); } catch (_) { }
 	}
 
 	// Resume gameplay loop immediately (caller should ensure countdown/UI handled)
@@ -626,16 +920,16 @@ export default class Game {
 		if (this.animating) return;
 		this.animating = true;
 		// reset clock to avoid jumps
-		try { this.clock.getDelta(); } catch(_) {}
+		try { this.clock.getDelta(); } catch (_) { }
 		// re-sync startTime reference so HUD stopwatch continues smoothly
-		try { this._startTimeMs = performance.now() - ((this._playTimeSeconds || 0) * 1000); } catch(_) { }
+		try { this._startTimeMs = performance.now() - ((this._playTimeSeconds || 0) * 1000); } catch (_) { }
 		this.loop();
-		try { if (this.audio) { this.audio.restoreBgm && this.audio.restoreBgm(); } } catch(_) {}
+		try { if (this.audio) { this.audio.restoreBgm && this.audio.restoreBgm(); } } catch (_) { }
 		// restore bloom/VFX
-		try { if (this.bloom && typeof this._bloomBeforePause !== 'undefined') { this.bloom.strength = this._bloomBeforePause; this._bloomBeforePause = undefined; } } catch(_) {}
-		try { window.dispatchEvent(new Event('game:resumed')); } catch(_) {}
+		try { if (this.bloom && typeof this._bloomBeforePause !== 'undefined') { this.bloom.strength = this._bloomBeforePause; this._bloomBeforePause = undefined; } } catch (_) { }
+		try { window.dispatchEvent(new Event('game:resumed')); } catch (_) { }
 		// resume in-game music rotator
-		try { this.startInGameMusicRotator(); } catch(_){}
+		try { this.startInGameMusicRotator(); } catch (_) { }
 	}
 
 	dispatchResumeHUD() {
@@ -660,34 +954,42 @@ export default class Game {
 		// adjust sun intensity to simulate day/night
 		this.sun.intensity = Math.max(0.2, 0.9 + elev * 0.6);
 		if (this.sunSprite) this.sunSprite.position.copy(this.sun.position);
-		this.scene.background.setHSL(0.62, 0.5, 0.05 + (elev*0.03+0.04));
-		this.scene.fog.color.setHSL(0.62, 0.4, 0.05 + (elev*0.03+0.04));
+		this.scene.background.setHSL(0.62, 0.5, 0.05 + (elev * 0.03 + 0.04));
+		this.scene.fog.color.setHSL(0.62, 0.4, 0.05 + (elev * 0.03 + 0.04));
 
 		// Hapus offset shake sebelumnya agar movement & kolisi tidak terpengaruh
 		if (this._shakeOffset && (this._shakeOffset.x || this._shakeOffset.y || this._shakeOffset.z)) {
 			this.camera.position.sub(this._shakeOffset);
-			this._shakeOffset.set(0,0,0);
+			this._shakeOffset.set(0, 0, 0);
 		}
 
+		// update inputs (gamepad)
+		try { if (typeof this.updateGamepad === 'function') this.updateGamepad(dt); } catch (_) { }
+
 		// update player via playerController
-		try { if (typeof this.updatePlayer === 'function') this.updatePlayer(dt); } catch(_) {}
-		this.updateEnemies(dt);
-		this.updateWave(dt);
-		this.updateAllies(dt);
-		this.updatePickups(dt);
-		this.updateGrenades(dt);
-		this.updateWeapon(dt);
-		this.updateCameraShake(dt);
-		this.updateWeaponSwitch(dt);
-		this.updateDeathAnim(dt);
-		this.updateParticles(dt);
-		this.updateGrenadeAim(dt);
-		this.updatePowerups(dt);
-		this.handleFireInputs();
+		if (this.currentSceneMode === 'game') {
+			try { if (typeof this.updatePlayer === 'function') this.updatePlayer(dt); } catch (_) { }
+			this.updateEnemies(dt);
+			this.updateWave(dt);
+			this.updateAllies(dt);
+			this.updatePickups(dt);
+			this.updateGrenades(dt);
+			this.updateWeapon(dt);
+			this.updateCameraShake(dt);
+			this.updateWeaponSwitch(dt);
+			this.updateDeathAnim(dt);
+			this.updateParticles(dt);
+			this.updateGrenadeAim(dt);
+			this.updatePowerups(dt);
+			this.handleFireInputs();
+		} else if (this.currentSceneMode === 'menu') {
+			// Update menu scene
+			this.menuScene.update(dt);
+		}
 
 		// adaptive culling update setiap beberapa frame untuk mengurangi overhead
 		this._cullTick = (this._cullTick || 0) + 1;
-		if ((this._cullTick % 10) === 0) try { this.updateAdaptiveCulling(); } catch(_) {}
+		if ((this._cullTick % 10) === 0) try { this.updateAdaptiveCulling(); } catch (_) { }
 
 		// reset edge flags per frame
 		this.input.shootPressed = false;
@@ -697,14 +999,18 @@ export default class Game {
 		this._poolTick(dt);
 
 		// render: gunakan composer kecuali device low-end -> pakai renderer langsung
-		if (this._lowEnd) this.renderer.render(this.scene, this.camera);
-		else this.composer.render();
+		if (this._lowEnd) {
+			this.renderer.render(this.scene, this.camera);
+		} else {
+			this.postFX.uniforms['time'].value = performance.now() * 0.001;
+			this.composer.render();
+		}
 
 		// flush HUD (delegated to hudController)
-		try { if (typeof this.flushHudIfDirty === 'function') this.flushHudIfDirty(); } catch(_) {}
+		try { if (typeof this.flushHudIfDirty === 'function') this.flushHudIfDirty(); } catch (_) { }
 	}
 
-	setFps(fps){
+	setFps(fps) {
 		if (!fps || fps <= 0) { this.targetFps = 0; this._minFrameTime = 0; return; }
 		const clamped = Math.max(30, Math.min(240, fps));
 		this.targetFps = clamped;
@@ -714,7 +1020,7 @@ export default class Game {
 	updatePlayer(dt) {
 		const speed = (this.input.run ? this.player.speedRun : this.player.speedWalk);
 		// powerup speed boost
-		const speedBoost = (this.powerups.speed>0)?1.3:1.0;
+		const speedBoost = (this.powerups.speed > 0) ? 1.3 : 1.0;
 		const direction = new THREE.Vector3();
 		direction.set(0, 0, 0);
 		if (this.input.forward) direction.z += 1;
@@ -734,9 +1040,9 @@ export default class Game {
 		const step = speed * speedBoost * dt;
 		this.tryMove(move.multiplyScalar(step));
 		// footstep SFX sederhana
-		if ((this.input.forward||this.input.backward||this.input.left||this.input.right)){
-			this._footTimer = (this._footTimer||0) - dt;
-			if (this._footTimer<=0){ this._footTimer = this.input.run?0.26:0.42; try{ this.audio.footstep({ run:this.input.run }); }catch(_){} }
+		if ((this.input.forward || this.input.backward || this.input.left || this.input.right)) {
+			this._footTimer = (this._footTimer || 0) - dt;
+			if (this._footTimer <= 0) { this._footTimer = this.input.run ? 0.26 : 0.42; try { this.audio.footstep({ run: this.input.run }); } catch (_) { } }
 		}
 
 		// Jump & gravity
@@ -754,7 +1060,7 @@ export default class Game {
 	}
 
 	tryMove(delta) {
-		try { const impl = this.tryMove; const proto = Object.getPrototypeOf(this).tryMove; if (impl && impl !== proto) return impl.call(this, delta); } catch(_){}
+		try { const impl = this.tryMove; const proto = Object.getPrototypeOf(this).tryMove; if (impl && impl !== proto) return impl.call(this, delta); } catch (_) { }
 		// no-op fallback
 	}
 
@@ -769,8 +1075,8 @@ export default class Game {
 
 	performSyncedShotRay() {
 		this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-		const enemyMeshes = (this._enemyMeshes && this._enemyMeshes.length>0) ? this._enemyMeshes : this.world.enemies.map(e=>e.mesh);
-		const obs = this._obstacleMeshes || this.world.obstacles.map(o=>o.mesh);
+		const enemyMeshes = (this._enemyMeshes && this._enemyMeshes.length > 0) ? this._enemyMeshes : this.world.enemies.map(e => e.mesh);
+		const obs = this._obstacleMeshes || this.world.obstacles.map(o => o.mesh);
 		const firstHits = this.raycaster.intersectObjects(enemyMeshes.concat(obs), true);
 		let targetPoint = null;
 		let targetEnemy = null;
@@ -800,7 +1106,7 @@ export default class Game {
 	tryShoot() {
 		const now = performance.now() / 1000;
 		const baseRate = (this.player.weapon === 'pistol' ? this.player.fireRate : 1.5);
-		const effRate = baseRate * (this.perks?.fireRateMult||1.0);
+		const effRate = baseRate * (this.perks?.fireRateMult || 1.0);
 		const interval = 1 / effRate;
 		if (now - this.player.lastShotTime < interval) return;
 		if (this.player.reloading) return;
@@ -809,9 +1115,9 @@ export default class Game {
 			if (this.player.ammoInMag <= 0) { this.audio.click(); return; }
 			this.player.lastShotTime = now;
 			this.player.ammoInMag -= 1;
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 			this.audio.shoot();
-			try { this.audio.duckBgm(0.45, 160); } catch(_) {}
+			try { this.audio.duckBgm(0.45, 160); } catch (_) { }
 			this.kickRecoil();
 			this.playMuzzleFlash();
 			this.spawnMuzzleLight();
@@ -825,11 +1131,11 @@ export default class Game {
 			let shotPoint = point;
 			if (point && coneDeg > 0) {
 				const rad = (coneDeg * Math.PI) / 180;
-				const offX = (Math.random()-0.5) * rad;
-				const offY = (Math.random()-0.5) * rad;
+				const offX = (Math.random() - 0.5) * rad;
+				const offY = (Math.random() - 0.5) * rad;
 				const camPos = this.camera.position.clone();
 				const to = point.clone().sub(camPos).normalize();
-				const up = new THREE.Vector3(0,1,0);
+				const up = new THREE.Vector3(0, 1, 0);
 				const right = new THREE.Vector3().crossVectors(to, up).normalize();
 				const trueUp = new THREE.Vector3().crossVectors(right, to).normalize();
 				const dir = to.clone().add(right.multiplyScalar(offX)).add(trueUp.multiplyScalar(offY)).normalize();
@@ -840,37 +1146,37 @@ export default class Game {
 				this.spawnTracer(start, shotPoint);
 				this.spawnBulletSparks(start, shotPoint);
 				this.spawnImpactDecal(shotPoint);
-				try { this.audio.playSample && this.audio.playSample('gunshot', { position: start, volume: 0.9 }); } catch(_) {}
+				try { this.audio.playSample && this.audio.playSample('gunshot', { position: start, volume: 0.9 }); } catch (_) { }
 			}
 			if (enemy && point) {
 				// headshot kasar: jika titik kena lebih tinggi dari pusat musuh
 				const head = enemy.mesh.position.clone(); head.y += 1.5;
 				const isHead = point.distanceTo(head) < 0.6;
 				const dmgBase = this.damageByDifficulty(28, 12);
-				const dmgMult = (this.powerups.damage>0?1.5:1.0) * (this.perks?.damageMult||1.0) * (isHead?1.8:1.0);
+				const dmgMult = (this.powerups.damage > 0 ? 1.5 : 1.0) * (this.perks?.damageMult || 1.0) * (isHead ? 1.8 : 1.0);
 				const dead = enemy.applyDamage(dmgBase * dmgMult);
 				this.audio.hit();
-				try { this.audio.playSample && this.audio.playSample('hit', { position: point, volume: 0.9 }); } catch(_) {}
-				if (isHead) { try { this.audio.headshot(); } catch(_) {} this.spawnHitMarker(point); this.spawnHitSparks(point, 26, 0xffc07a); }
+				try { this.audio.playSample && this.audio.playSample('hit', { position: point, volume: 0.9 }); } catch (_) { }
+				if (isHead) { try { this.audio.headshot(); } catch (_) { } this.spawnHitMarker(point); this.spawnHitSparks(point, 26, 0xffc07a); }
 				else { this.spawnHitMarker(point); this.spawnHitSparks(point, 10, 0xfff1a8); }
 				if (dead) {
-					this.addScore(10 * (isHead?1.5:1.0));
-					this.player.kills = (this.player.kills||0) + 1;
+					this.addScore(10 * (isHead ? 1.5 : 1.0));
+					this.player.kills = (this.player.kills || 0) + 1;
 					this.onEnemyKilled();
 					// catat kematian wave sebelum menghapus enemy agar counter sinkron
-					try { this.recordEnemyDeath(enemy); } catch(_) {}
+					try { this.recordEnemyDeath(enemy); } catch (_) { }
 					this.removeEnemy(enemy);
-					try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+					try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 					// spawn pengganti hanya jika sistem wave sedang aktif
 					try {
 						if (this.waveState === 'idle') { this.spawnEnemy(); }
-					} catch(_) { /* ignore fallback when spawn blocked */ }
+					} catch (_) { /* ignore fallback when spawn blocked */ }
 				}
 			}
 		}
 	}
 
-	handleFireInputs(){
+	handleFireInputs() {
 		if (this._switchAnim.active) return;
 		// Pistol: tahan untuk auto-fire sesuai fireRate
 		if (this.player.weapon === 'pistol') {
@@ -885,7 +1191,7 @@ export default class Game {
 			if (now - this.player.lastShotTime < interval) return;
 			this.player.lastShotTime = now;
 			this.player.grenades -= 1;
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 			this.audio.shoot();
 			this.throwGrenade();
 			this.clearGrenadeTrajectory();
@@ -900,13 +1206,13 @@ export default class Game {
 		const upBoost = 0.6; // komponen vertikal
 		const vel = new THREE.Vector3(dir.x, Math.max(0.2, dir.y) + upBoost, dir.z).normalize().multiplyScalar(initialSpeed);
 		// play throw sample
-		try { this.audio.playSample && this.audio.playSample('hit', { position: start, volume: 0.6 }); } catch(_) {}
+		try { this.audio.playSample && this.audio.playSample('hit', { position: start, volume: 0.6 }); } catch (_) { }
 		const g = new Grenade(this.scene, start, vel, {
 			obstacles: this.world.obstacles,
 			bounds: this.world.bounds,
 			fuse: 1.6,
 			explodeOnImpact: true,
-			onExplode: (center)=>{
+			onExplode: (center) => {
 				// compute power based on player perks (consistent for damage and VFX)
 				const perkMult = (this.perks && this.perks.grenadeDmg) ? this.perks.grenadeDmg : 1.0;
 				const powerMultiplier = 1.5 * Math.max(1, perkMult);
@@ -914,8 +1220,8 @@ export default class Game {
 				this.spawnExplosion(center, powerMultiplier);
 				this.spawnHitSparks(center, 48 * Math.max(1, Math.round(powerMultiplier)), 0xffe08a);
 				this.shake.amp = Math.min(6.0, this.shake.amp + 1.6 * powerMultiplier);
-				try { this.audio.playSample && this.audio.playSample('explosion', { position: center, volume: 0.6 * powerMultiplier }); } catch(_) {}
-				if (this.audio) try { this.audio.explosion({ volume: 1.0 * powerMultiplier }); } catch(_) {}
+				try { this.audio.playSample && this.audio.playSample('explosion', { position: center, volume: 0.6 * powerMultiplier }); } catch (_) { }
+				if (this.audio) try { this.audio.explosion({ volume: 1.0 * powerMultiplier }); } catch (_) { }
 				// apply area damage scaled by powerMultiplier
 				const radius = 12.0 * Math.max(1, powerMultiplier);
 				for (const e of [...this.world.enemies]) {
@@ -927,13 +1233,13 @@ export default class Game {
 						const dead = e.applyDamage(dmg);
 						if (dead) {
 							this.addScore(12);
-							try { this.recordEnemyDeath(e); } catch(_) {}
+							try { this.recordEnemyDeath(e); } catch (_) { }
 							this.removeEnemy(e);
-							try { if (this.waveState === 'idle') { this.spawnEnemy(); } } catch(_) {}
+							try { if (this.waveState === 'idle') { this.spawnEnemy(); } } catch (_) { }
 						}
 					}
 				}
-				try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+				try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 			}
 		});
 		this.world.grenades.push(g);
@@ -941,20 +1247,20 @@ export default class Game {
 
 	spawnHitSparks(center, count = 8, color = 0xfff1a8) {
 		if (!this._pointsPool) return;
-		let entry = this._pointsPool.find(x=>!x.busy);
+		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
 		const max = pts.userData._maxCount || 64;
 		const arr = pts.geometry.attributes.position.array;
 		let used = Math.min(count, max);
-		for (let i=0;i<used;i++){
-			const a = Math.random()*Math.PI*2; const r = Math.random()*0.6;
-			arr[i*3+0] = center.x + Math.cos(a)*r;
-			arr[i*3+1] = center.y + Math.random()*0.6;
-			arr[i*3+2] = center.z + Math.sin(a)*r;
+		for (let i = 0; i < used; i++) {
+			const a = Math.random() * Math.PI * 2; const r = Math.random() * 0.6;
+			arr[i * 3 + 0] = center.x + Math.cos(a) * r;
+			arr[i * 3 + 1] = center.y + Math.random() * 0.6;
+			arr[i * 3 + 2] = center.z + Math.sin(a) * r;
 		}
 		// fill rest with last value to avoid glitches
-		for (let i=used;i<max;i++){ arr[i*3+0]=arr[(used-1)*3+0]; arr[i*3+1]=arr[(used-1)*3+1]; arr[i*3+2]=arr[(used-1)*3+2]; }
+		for (let i = used; i < max; i++) { arr[i * 3 + 0] = arr[(used - 1) * 3 + 0]; arr[i * 3 + 1] = arr[(used - 1) * 3 + 1]; arr[i * 3 + 2] = arr[(used - 1) * 3 + 2]; }
 		pts.geometry.attributes.position.needsUpdate = true;
 		pts.material.color.setHex(color);
 		pts.visible = true; entry.busy = true; entry.ttl = 0.25;
@@ -962,19 +1268,19 @@ export default class Game {
 
 	spawnBulletSparks(start, end) {
 		if (!this._pointsPool) return;
-		let entry = this._pointsPool.find(x=>!x.busy);
+		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
 		const max = pts.userData._maxCount || 64;
 		const arr = pts.geometry.attributes.position.array;
 		const count = Math.min(12, max);
-		for (let i=0;i<count;i++){
-			const t = i/(count-1);
-			arr[i*3+0] = THREE.MathUtils.lerp(start.x, end.x, t) + (Math.random()-0.5)*0.02;
-			arr[i*3+1] = THREE.MathUtils.lerp(start.y, end.y, t) + (Math.random()-0.5)*0.02;
-			arr[i*3+2] = THREE.MathUtils.lerp(start.z, end.z, t) + (Math.random()-0.5)*0.02;
+		for (let i = 0; i < count; i++) {
+			const t = i / (count - 1);
+			arr[i * 3 + 0] = THREE.MathUtils.lerp(start.x, end.x, t) + (Math.random() - 0.5) * 0.02;
+			arr[i * 3 + 1] = THREE.MathUtils.lerp(start.y, end.y, t) + (Math.random() - 0.5) * 0.02;
+			arr[i * 3 + 2] = THREE.MathUtils.lerp(start.z, end.z, t) + (Math.random() - 0.5) * 0.02;
 		}
-		for (let i=count;i<max;i++){ arr[i*3+0]=arr[(count-1)*3+0]; arr[i*3+1]=arr[(count-1)*3+1]; arr[i*3+2]=arr[(count-1)*3+2]; }
+		for (let i = count; i < max; i++) { arr[i * 3 + 0] = arr[(count - 1) * 3 + 0]; arr[i * 3 + 1] = arr[(count - 1) * 3 + 1]; arr[i * 3 + 2] = arr[(count - 1) * 3 + 2]; }
 		pts.geometry.attributes.position.needsUpdate = true;
 		pts.material.color.setHex(0xfff1a8);
 		pts.visible = true; entry.busy = true; entry.ttl = 0.12;
@@ -992,29 +1298,29 @@ export default class Game {
 		// shock rings
 		const ringGeo = new THREE.RingGeometry(0.2, 0.24, 48);
 		const ringMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
-		const ring1 = new THREE.Mesh(ringGeo, ringMat.clone()); ring1.rotation.x = -Math.PI/2;
-		const ring2 = new THREE.Mesh(ringGeo, ringMat.clone()); ring2.rotation.x = -Math.PI/2; ring2.material.color.setHex(0xffc07a);
+		const ring1 = new THREE.Mesh(ringGeo, ringMat.clone()); ring1.rotation.x = -Math.PI / 2;
+		const ring2 = new THREE.Mesh(ringGeo, ringMat.clone()); ring2.rotation.x = -Math.PI / 2; ring2.material.color.setHex(0xffc07a);
 		// smoke billboard sederhana (sprite)
 		const smokeTex = this._getSmokeTexture();
 		const smokeMat = new THREE.SpriteMaterial({ map: smokeTex, color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false });
 		const smoke = new THREE.Sprite(smokeMat); smoke.scale.set(6, 6, 1);
 		// multi-layer smoke puffs for richer effect
 		const extraSmokes = [];
-		for (let si=0; si<3; si++){
+		for (let si = 0; si < 3; si++) {
 			try {
-				const m = new THREE.SpriteMaterial({ map: smokeTex, color: 0xffffff, transparent: true, opacity: 0.75 - si*0.18, depthWrite: false });
-				const s = new THREE.Sprite(m); s.scale.set(3 + si*2.5, 3 + si*2.5, 1);
-				s.position.copy(center.clone().add(new THREE.Vector3((Math.random()-0.5)*0.8, 0.2 + si*0.12, (Math.random()-0.5)*0.8)));
+				const m = new THREE.SpriteMaterial({ map: smokeTex, color: 0xffffff, transparent: true, opacity: 0.75 - si * 0.18, depthWrite: false });
+				const s = new THREE.Sprite(m); s.scale.set(3 + si * 2.5, 3 + si * 2.5, 1);
+				s.position.copy(center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.2 + si * 0.12, (Math.random() - 0.5) * 0.8)));
 				this.scene.add(s); extraSmokes.push(s);
 				// animate
-				let st=0; const stTick=()=>{ if (st>1.4) { try{ this.scene.remove(s); m.dispose(); }catch(_){} return; } s.material.opacity = (0.75 - si*0.18) * (1 - (st/1.4)); s.scale.setScalar(THREE.MathUtils.lerp(3 + si*2.5, 8 + si*3.5, st)); s.position.y += 0.003 + si*0.002; st += 0.04; requestAnimationFrame(stTick); }; stTick();
-			} catch(_) {}
+				let st = 0; const stTick = () => { if (st > 1.4) { try { this.scene.remove(s); m.dispose(); } catch (_) { } return; } s.material.opacity = (0.75 - si * 0.18) * (1 - (st / 1.4)); s.scale.setScalar(THREE.MathUtils.lerp(3 + si * 2.5, 8 + si * 3.5, st)); s.position.y += 0.003 + si * 0.002; st += 0.04; requestAnimationFrame(stTick); }; stTick();
+			} catch (_) { }
 		}
 		// debris titik (increased, scale with quality)
 		const debrisCount = Math.min(1200, Math.floor(80 * particleQualityScale * Math.max(1, powerMultiplier)));
 		const debris = this._spawnDebris(center, debrisCount);
 		// ember sparks: small bright particles for visual punch (scaled)
-		try { this.spawnHitSparks(center.clone().add(new THREE.Vector3(0,0.2,0)), Math.floor(64 * particleQualityScale * Math.max(1, powerMultiplier)), 0xff8a33); } catch(_){ }
+		try { this.spawnHitSparks(center.clone().add(new THREE.Vector3(0, 0.2, 0)), Math.floor(64 * particleQualityScale * Math.max(1, powerMultiplier)), 0xff8a33); } catch (_) { }
 		// flash light (scale by powerMultiplier)
 		const flash = new THREE.PointLight(0xfff1a8, 3.0 * Math.max(1, powerMultiplier), 28 * Math.max(1, powerMultiplier));
 		group.add(glow); group.add(ring1); group.add(ring2); group.add(smoke); group.add(flash);
@@ -1022,100 +1328,101 @@ export default class Game {
 		// screen flash halus via overlay
 		this._screenFlash(0.7 * Math.max(1, powerMultiplier), Math.round(200 * Math.max(1, powerMultiplier)));
 		// immediate camera hit to emphasize blast
-		try { this.shake.amp = Math.min(8.0, (this.shake.amp || 0) + 2.4 * Math.min(4, particleQualityScale) * Math.max(1, powerMultiplier)); } catch(_){}
+		try { this.shake.amp = Math.min(8.0, (this.shake.amp || 0) + 2.4 * Math.min(4, particleQualityScale) * Math.max(1, powerMultiplier)); } catch (_) { }
 		let t = 0;
 		const tick = () => {
 			if (t > 1.1) { // cleanup smokes
-				for (const es of extraSmokes) try{ this.scene.remove(es); es.material.dispose(); }catch(_){}
-				this.scene.remove(group); glow.geometry.dispose(); glow.material.dispose(); ring1.geometry.dispose(); ring1.material.dispose(); ring2.geometry.dispose(); smoke.material.dispose(); return; }
+				for (const es of extraSmokes) try { this.scene.remove(es); es.material.dispose(); } catch (_) { }
+				this.scene.remove(group); glow.geometry.dispose(); glow.material.dispose(); ring1.geometry.dispose(); ring1.material.dispose(); ring2.geometry.dispose(); smoke.material.dispose(); return;
+			}
 			const s = THREE.MathUtils.lerp(0.3, 9.0, t);
 			glow.scale.setScalar(s);
 			ring1.scale.setScalar(THREE.MathUtils.lerp(1, 26, t)); ring1.material.opacity = 0.95 * (1 - t);
-			ring2.scale.setScalar(THREE.MathUtils.lerp(1, 18, Math.min(1, t*1.4))); ring2.material.opacity = 0.85 * (1 - Math.min(1, t*1.4));
-			smoke.material.opacity = 0.9 * (1 - Math.min(1, (t-0.1)*0.9)); smoke.scale.setScalar(THREE.MathUtils.lerp(4, 16, t));
+			ring2.scale.setScalar(THREE.MathUtils.lerp(1, 18, Math.min(1, t * 1.4))); ring2.material.opacity = 0.85 * (1 - Math.min(1, t * 1.4));
+			smoke.material.opacity = 0.9 * (1 - Math.min(1, (t - 0.1) * 0.9)); smoke.scale.setScalar(THREE.MathUtils.lerp(4, 16, t));
 			flash.intensity = 2.2 * (1 - t);
 			// spawn additional small debris particles in early frames for thrown look (scaled by quality)
 			if (t < 0.25) {
-				try { const d = this._spawnDebris(center.clone().add(new THREE.Vector3(0,0.15,0)), Math.min(Math.floor(160 * particleQualityScale * Math.max(1, powerMultiplier)), 2000)); setTimeout(()=>{ try{ this.scene.remove(d.obj); d.dispose(); }catch(_){} }, 1200); } catch(_) {}
-				try { this.spawnHitSparks(center.clone().add(new THREE.Vector3((Math.random()-0.5)*0.6,0.2, (Math.random()-0.5)*0.6)), Math.min(Math.floor(96 * particleQualityScale * Math.max(1, powerMultiplier)), 2000), 0xffc07a); } catch(_){ }
+				try { const d = this._spawnDebris(center.clone().add(new THREE.Vector3(0, 0.15, 0)), Math.min(Math.floor(160 * particleQualityScale * Math.max(1, powerMultiplier)), 2000)); setTimeout(() => { try { this.scene.remove(d.obj); d.dispose(); } catch (_) { } }, 1200); } catch (_) { }
+				try { this.spawnHitSparks(center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.2, (Math.random() - 0.5) * 0.6)), Math.min(Math.floor(96 * particleQualityScale * Math.max(1, powerMultiplier)), 2000), 0xffc07a); } catch (_) { }
 			}
 			// fade debris velocities sedikit demi realism
-			try { if (debris && debris.obj && debris.dispose && debris.obj.geometry) { const pos = debris.obj.geometry.attributes.position.array; for (let i=0;i<(debris.count||0);i++){ pos[i*3+1] += (debris.velocities?debris.velocities[i].vy*0.016:0); } debris.obj.geometry.attributes.position.needsUpdate = true; } } catch(_) {}
+			try { if (debris && debris.obj && debris.dispose && debris.obj.geometry) { const pos = debris.obj.geometry.attributes.position.array; for (let i = 0; i < (debris.count || 0); i++) { pos[i * 3 + 1] += (debris.velocities ? debris.velocities[i].vy * 0.016 : 0); } debris.obj.geometry.attributes.position.needsUpdate = true; } } catch (_) { }
 			t += 0.05;
 			requestAnimationFrame(tick);
 		};
 		tick();
 		// cleanup debris
-		setTimeout(()=>{ try { this.scene.remove(debris.obj); debris.dispose(); } catch(_){} }, 1600);
+		setTimeout(() => { try { this.scene.remove(debris.obj); debris.dispose(); } catch (_) { } }, 1600);
 	}
 
-	_getSmokeTexture(){
+	_getSmokeTexture() {
 		if (this._smokeTex) return this._smokeTex;
-		const size = 128; const data = new Uint8Array(size*size*4);
-		for (let y=0;y<size;y++){
-			for (let x=0;x<size;x++){
-				const i = (y*size + x)*4;
-				const dx = x-size/2; const dy = y-size/2; const d = Math.sqrt(dx*dx+dy*dy)/(size/2);
+		const size = 128; const data = new Uint8Array(size * size * 4);
+		for (let y = 0; y < size; y++) {
+			for (let x = 0; x < size; x++) {
+				const i = (y * size + x) * 4;
+				const dx = x - size / 2; const dy = y - size / 2; const d = Math.sqrt(dx * dx + dy * dy) / (size / 2);
 				const alpha = Math.max(0, 1 - Math.pow(d, 1.6));
-				data[i]=200; data[i+1]=200; data[i+2]=200; data[i+3]=Math.floor(alpha*255);
+				data[i] = 200; data[i + 1] = 200; data[i + 2] = 200; data[i + 3] = Math.floor(alpha * 255);
 			}
 		}
 		this._smokeTex = new THREE.DataTexture(data, size, size); this._smokeTex.needsUpdate = true; this._smokeTex.minFilter = THREE.LinearFilter; this._smokeTex.magFilter = THREE.LinearFilter;
 		return this._smokeTex;
 	}
 
-	_spawnDebris(center, count){
+	_spawnDebris(center, count) {
 		// jika ada pool, gunakan pool untuk menghindari alokasi
-		if (this._debrisPool && this._debrisPool.length>0) {
-			let entry = this._debrisPool.find(x=>!x.busy);
+		if (this._debrisPool && this._debrisPool.length > 0) {
+			let entry = this._debrisPool.find(x => !x.busy);
 			if (!entry) entry = this._debrisPool[0];
 			const pts = entry.obj;
 			const max = pts.userData._maxCount || 64;
 			const used = Math.min(count, max);
 			const arr = pts.geometry.attributes.position.array;
 			entry.count = used; entry.busy = true; entry.ttl = 0.6; entry.velocities = [];
-			for (let i=0;i<used;i++){
-				arr[i*3+0] = center.x; arr[i*3+1] = center.y; arr[i*3+2] = center.z;
-				const a = Math.random()*Math.PI*2; const v = 6 + Math.random()*10;
-				entry.velocities[i] = { vx: Math.cos(a)*v, vy: 3+Math.random()*6, vz: Math.sin(a)*v };
+			for (let i = 0; i < used; i++) {
+				arr[i * 3 + 0] = center.x; arr[i * 3 + 1] = center.y; arr[i * 3 + 2] = center.z;
+				const a = Math.random() * Math.PI * 2; const v = 6 + Math.random() * 10;
+				entry.velocities[i] = { vx: Math.cos(a) * v, vy: 3 + Math.random() * 6, vz: Math.sin(a) * v };
 			}
-			for (let i=used;i<max;i++){ arr[i*3+0]=arr[(used-1)*3+0]; arr[i*3+1]=arr[(used-1)*3+1]; arr[i*3+2]=arr[(used-1)*3+2]; }
+			for (let i = used; i < max; i++) { arr[i * 3 + 0] = arr[(used - 1) * 3 + 0]; arr[i * 3 + 1] = arr[(used - 1) * 3 + 1]; arr[i * 3 + 2] = arr[(used - 1) * 3 + 2]; }
 			pts.geometry.attributes.position.needsUpdate = true; pts.visible = true;
-			return { obj: pts, dispose: ()=>{ try{ pts.visible=false; }catch(_){} } };
+			return { obj: pts, dispose: () => { try { pts.visible = false; } catch (_) { } } };
 		}
 		// fallback original alokasi jika pool tidak ada
 		const geom = new THREE.BufferGeometry();
-		const positions = new Float32Array(count*3);
+		const positions = new Float32Array(count * 3);
 		const velocities = [];
-		for (let i=0;i<count;i++){
-			positions[i*3+0] = center.x; positions[i*3+1] = center.y; positions[i*3+2] = center.z;
-			const a = Math.random()*Math.PI*2; const v = 8 + Math.random()*10;
-			velocities.push({ vx: Math.cos(a)*v, vy: 3+Math.random()*6, vz: Math.sin(a)*v });
+		for (let i = 0; i < count; i++) {
+			positions[i * 3 + 0] = center.x; positions[i * 3 + 1] = center.y; positions[i * 3 + 2] = center.z;
+			const a = Math.random() * Math.PI * 2; const v = 8 + Math.random() * 10;
+			velocities.push({ vx: Math.cos(a) * v, vy: 3 + Math.random() * 6, vz: Math.sin(a) * v });
 		}
-		geom.setAttribute('position', new THREE.BufferAttribute(positions,3));
+		geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 		const mat = new THREE.PointsMaterial({ color: 0xffae5a, size: 0.06, transparent: true, opacity: 0.95 });
 		const pts = new THREE.Points(geom, mat);
 		this.scene.add(pts);
-		let t = 0; const tick = ()=>{
-			if (t>0.5) { return; }
+		let t = 0; const tick = () => {
+			if (t > 0.5) { return; }
 			const pos = geom.attributes.position.array;
-			for (let i=0;i<count;i++){
+			for (let i = 0; i < count; i++) {
 				velocities[i].vy += -12 * 0.016;
-				pos[i*3+0] += velocities[i].vx * 0.016;
-				pos[i*3+1] += velocities[i].vy * 0.016;
-				pos[i*3+2] += velocities[i].vz * 0.016;
+				pos[i * 3 + 0] += velocities[i].vx * 0.016;
+				pos[i * 3 + 1] += velocities[i].vy * 0.016;
+				pos[i * 3 + 2] += velocities[i].vz * 0.016;
 			}
 			geom.attributes.position.needsUpdate = true;
 			t += 0.016; requestAnimationFrame(tick);
 		}; tick();
-		return { obj: pts, dispose: ()=>{ try{ geom.dispose(); mat.dispose(); }catch(_){} } };
+		return { obj: pts, dispose: () => { try { geom.dispose(); mat.dispose(); } catch (_) { } } };
 	}
 
-	_screenFlash(intensity = 0.4, durationMs = 120){
+	_screenFlash(intensity = 0.4, durationMs = 120) {
 		const el = document.getElementById('transition'); if (!el) return;
 		el.style.background = `rgba(255,241,168,${intensity})`;
 		el.classList.remove('hidden'); el.classList.add('show');
-		setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>{ el.classList.add('hidden'); el.style.background = '#000'; }, 200); }, durationMs);
+		setTimeout(() => { el.classList.remove('show'); setTimeout(() => { el.classList.add('hidden'); el.style.background = '#000'; }, 200); }, durationMs);
 	}
 
 	damageByDifficulty(base, variance) {
@@ -1133,23 +1440,23 @@ export default class Game {
 		if (need <= 0 || this.player.ammoReserve <= 0) return;
 		this.player.reloading = true;
 		this.audio.reload();
-		const fx = document.getElementById('reloadFX'); if (fx){ fx.classList.remove('hidden'); fx.classList.add('play'); setTimeout(()=>{ fx.classList.remove('play'); fx.classList.add('hidden'); }, 500); }
+		const fx = document.getElementById('reloadFX'); if (fx) { fx.classList.remove('hidden'); fx.classList.add('play'); setTimeout(() => { fx.classList.remove('play'); fx.classList.add('hidden'); }, 500); }
 		// show reload cooldown in HUD
 		let cd = 0.9; // seconds
-		try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(cd); } catch(_){}
-		const cdInterval = setInterval(()=>{
+		try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(cd); } catch (_) { }
+		const cdInterval = setInterval(() => {
 			cd -= 0.1;
-			try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(Math.max(0, cd)); } catch(_){}
-			if (cd <= 0) { clearInterval(cdInterval); try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(0); } catch(_){} }
+			try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(Math.max(0, cd)); } catch (_) { }
+			if (cd <= 0) { clearInterval(cdInterval); try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(0); } catch (_) { } }
 		}, 100);
 		setTimeout(() => {
 			const toLoad = Math.min(need, this.player.ammoReserve);
 			this.player.ammoInMag += toLoad;
 			this.player.ammoReserve -= toLoad;
 			this.player.reloading = false;
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 			clearInterval(cdInterval);
-			try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(0); } catch(_){}
+			try { if (this.hud && typeof this.hud.setSkillCooldown === 'function') this.hud.setSkillCooldown(0); } catch (_) { }
 		}, 900);
 	}
 
@@ -1165,23 +1472,23 @@ export default class Game {
 	spawnTracer(start, end, color = 0xfff1a8) {
 		// try reuse tracer from pool
 		if (!this._tracerPool) return;
-		let entry = this._tracerPool.find(x=>!x.busy);
+		let entry = this._tracerPool.find(x => !x.busy);
 		if (!entry) entry = this._tracerPool[0];
 		const line = entry.obj;
 		const posAttr = line.geometry.attributes.position.array;
 		// jika origin sangat rendah (mis. proxy mesh di ground), angkat agar terlihat dari badan
 		const s = start.clone(); if (!s.y || s.y < 0.6) s.y = 1.6;
 		posAttr[0] = s.x; posAttr[1] = s.y; posAttr[2] = s.z;
-		const toVec = end ? end : (()=>{ const d=new THREE.Vector3(); this.camera.getWorldDirection(d); return start.clone().add(d.multiplyScalar(30)); })();
+		const toVec = end ? end : (() => { const d = new THREE.Vector3(); this.camera.getWorldDirection(d); return start.clone().add(d.multiplyScalar(30)); })();
 		// add small controlled jitter to simulate minor misses (keeps visual variety)
 		try {
 			const dirVec = toVec.clone().sub(s).normalize();
-			const right = new THREE.Vector3().crossVectors(dirVec, new THREE.Vector3(0,1,0)).normalize();
+			const right = new THREE.Vector3().crossVectors(dirVec, new THREE.Vector3(0, 1, 0)).normalize();
 			const up = new THREE.Vector3().crossVectors(right, dirVec).normalize();
 			const jitterScale = 0.02; // controlled amount
-			const jitter = right.multiplyScalar((Math.random()-0.5) * jitterScale).add(up.multiplyScalar((Math.random()-0.5) * jitterScale * 0.6));
+			const jitter = right.multiplyScalar((Math.random() - 0.5) * jitterScale).add(up.multiplyScalar((Math.random() - 0.5) * jitterScale * 0.6));
 			toVec.add(jitter);
-		} catch(_) {}
+		} catch (_) { }
 		// jika target rendah, set y ke sama dengan origin agar tracer lurus
 		const t = toVec.clone(); if (!t.y || t.y < 0.6) t.y = s.y;
 		posAttr[3] = t.x; posAttr[4] = t.y; posAttr[5] = t.z;
@@ -1189,30 +1496,30 @@ export default class Game {
 		line.material.color.setHex(color);
 		line.visible = true; entry.busy = true; entry.ttl = 0.12; // seconds (diperpanjang sedikit agar lintasan lebih jelas)
 		// jika device quality tinggi, biarkan tracer sedikit lebih lama
-		try { if ((this.config && this.config.particles) && this.config.particles > 300) entry.ttl = 0.24; else entry.ttl = 0.16; } catch(_){}
+		try { if ((this.config && this.config.particles) && this.config.particles > 300) entry.ttl = 0.24; else entry.ttl = 0.16; } catch (_) { }
 		// whizz SFX if near camera
-		try { const cam = this.camera.position; const seg = new THREE.Vector3().subVectors(toVec, start); const toCam = new THREE.Vector3().subVectors(cam, start); const t = Math.max(0, Math.min(1, toCam.dot(seg.clone().normalize()) / seg.length())); const closest = start.clone().add(seg.multiplyScalar(t)); if (closest.distanceTo(cam) < 2.2) { try { this.audio.whizz(); } catch(_) {} } } catch(_) {}
+		try { const cam = this.camera.position; const seg = new THREE.Vector3().subVectors(toVec, start); const toCam = new THREE.Vector3().subVectors(cam, start); const t = Math.max(0, Math.min(1, toCam.dot(seg.clone().normalize()) / seg.length())); const closest = start.clone().add(seg.multiplyScalar(t)); if (closest.distanceTo(cam) < 2.2) { try { this.audio.whizz(); } catch (_) { } } } catch (_) { }
 		// add short-lived tracer glow points along beam
-		try { this.spawnTracerGlow(start, end, color, 12); } catch(_) {} // lebih banyak glow
+		try { this.spawnTracerGlow(start, end, color, 12); } catch (_) { } // lebih banyak glow
 	}
 
 	// short burst of glow points along tracer to create trail bloom
 	spawnTracerGlow(start, end, color = 0xfff1a8, count = 6) {
 		if (!this._pointsPool) return;
-		let entry = this._pointsPool.find(x=>!x.busy);
+		let entry = this._pointsPool.find(x => !x.busy);
 		if (!entry) entry = this._pointsPool[0];
 		const pts = entry.obj;
 		const max = pts.userData._maxCount || 64;
 		const arr = pts.geometry.attributes.position.array;
 		const used = Math.min(count, max);
-		for (let i=0;i<used;i++){
-			const t = i/(used-1);
-			const x = THREE.MathUtils.lerp(start.x, end.x, t) + (Math.random()-0.5)*0.02;
-			const y = THREE.MathUtils.lerp(start.y, end.y, t) + (Math.random()-0.5)*0.02;
-			const z = THREE.MathUtils.lerp(start.z, end.z, t) + (Math.random()-0.5)*0.02;
-			arr[i*3+0] = x; arr[i*3+1] = y; arr[i*3+2] = z;
+		for (let i = 0; i < used; i++) {
+			const t = i / (used - 1);
+			const x = THREE.MathUtils.lerp(start.x, end.x, t) + (Math.random() - 0.5) * 0.02;
+			const y = THREE.MathUtils.lerp(start.y, end.y, t) + (Math.random() - 0.5) * 0.02;
+			const z = THREE.MathUtils.lerp(start.z, end.z, t) + (Math.random() - 0.5) * 0.02;
+			arr[i * 3 + 0] = x; arr[i * 3 + 1] = y; arr[i * 3 + 2] = z;
 		}
-		for (let i=used;i<max;i++){ arr[i*3+0]=arr[(used-1)*3+0]; arr[i*3+1]=arr[(used-1)*3+1]; arr[i*3+2]=arr[(used-1)*3+2]; }
+		for (let i = used; i < max; i++) { arr[i * 3 + 0] = arr[(used - 1) * 3 + 0]; arr[i * 3 + 1] = arr[(used - 1) * 3 + 1]; arr[i * 3 + 2] = arr[(used - 1) * 3 + 2]; }
 		pts.geometry.attributes.position.needsUpdate = true;
 		pts.material.color.setHex(color);
 		pts.visible = true; entry.busy = true; entry.ttl = 0.12;
@@ -1221,12 +1528,12 @@ export default class Game {
 	playMuzzleFlash() {
 		if (!this.weapon) return;
 		this.weapon.flash.visible = true;
-		try { this.flashBloom(0.9, 0.12); } catch(_) {}
+		try { this.flashBloom(0.9, 0.12); } catch (_) { }
 		// small spark burst at muzzle
 		try {
 			const pos = this.weapon.muzzle.getWorldPosition(new THREE.Vector3());
 			this.spawnHitSparks(pos, 8, 0xfff1a8);
-		} catch(_) {}
+		} catch (_) { }
 		setTimeout(() => { if (this.weapon) this.weapon.flash.visible = false; }, 40);
 	}
 
@@ -1267,101 +1574,104 @@ export default class Game {
 		try {
 			const impl = this.spawnEnemy; const proto = Object.getPrototypeOf(this).spawnEnemy;
 			if (impl && impl !== proto) return impl.call(this);
-		} catch(_){}
+		} catch (_) { }
 	}
 
 	removeEnemy(enemy) {
-		try { enemy.dispose(this.scene); } catch(e){ console.warn('[RemoveEnemy] dispose failed', e); }
+		try { enemy.dispose(this.scene); } catch (e) { console.warn('[RemoveEnemy] dispose failed', e); }
 		this.world.enemies = this.world.enemies.filter(e => e !== enemy);
 		this._enemyMeshes = this.world.enemies.map(e => e.mesh);
 		console.debug('[RemoveEnemy] removed', { remaining: this.world.enemies.length });
 		// jadwalkan refresh HUD (throttled)
-		try { this.markHudDirty(); } catch(_){ }
+		try { this.markHudDirty(); } catch (_) { }
 	}
 
 	spawnInitialAllies() {
-		// spawn initial allies spread out using Poisson-like sampler
+		// Spawn Allies (Same Team as Player)
 		const p = this.controls.getObject().position;
 		const count = 5;
-		for (let i=0;i<count;i++){
-			const pos = this.spawnPositionPoissonAround(p, 6 + i*0.5, 12 + i*2, 4.0, 300);
+		for (let i = 0; i < count; i++) {
+			const pos = this.spawnPositionPoissonAround(p, 6 + i * 0.5, 12 + i * 2, 4.0, 300);
 			const ally = new Ally(this.scene, pos);
+			ally.team = this.player.team; // Assign Team
 			this.world.allies.push(ally);
 			if (!this.scene.userData) this.scene.userData = {};
 			if (!this.scene.userData._alliesList) this.scene.userData._alliesList = [];
 			this.scene.userData._alliesList.push(ally);
 		}
-		try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+		try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 	}
 
 	spawnAlly() {
 		const p = this.controls.getObject().position;
 		const pos = this.spawnPositionPoissonAround(p, 3.0, 8.0, 3.0, 200);
 		const ally = new Ally(this.scene, pos);
+		ally.team = this.player.team; // Assign Team
 		this.world.allies.push(ally);
 		if (!this.scene.userData) this.scene.userData = {};
 		if (!this.scene.userData._alliesList) this.scene.userData._alliesList = [];
 		this.scene.userData._alliesList.push(ally);
-		try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+		try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 	}
 
 	removeAlly(ally) {
 		ally.dispose(this.scene);
 		this.world.allies = this.world.allies.filter(a => a !== ally);
 		// juga hapus dari cache scene
-		try { if (this.scene.userData && this.scene.userData._alliesList) this.scene.userData._alliesList = this.scene.userData._alliesList.filter(a => a !== ally); } catch(_) {}
-		try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+		try { if (this.scene.userData && this.scene.userData._alliesList) this.scene.userData._alliesList = this.scene.userData._alliesList.filter(a => a !== ally); } catch (_) { }
+		try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 		setTimeout(() => this.spawnAllyWithEmerge(), 1600);
 	}
 
-	spawnAllyWithEmerge(){
+	spawnAllyWithEmerge() {
 		// pilih posisi sekitar player namun tidak terlalu dekat
 		const p = this.controls.getObject().position;
 		let pos = null;
 		for (let attempt = 0; attempt < 14; attempt++) {
-			const cand = new THREE.Vector3(p.x + (Math.random()-0.5)*12, 0, p.z + (Math.random()-0.5)*12);
+			const cand = new THREE.Vector3(p.x + (Math.random() - 0.5) * 12, 0, p.z + (Math.random() - 0.5) * 12);
 			let tooClose = false;
 			for (const a of this.world.allies) { if (a.mesh && a.mesh.position.distanceTo(cand) < 3.5) { tooClose = true; break; } }
 			if (!tooClose) { pos = cand; break; }
 		}
-		if (!pos) pos = new THREE.Vector3(p.x + (Math.random()-0.5)*10, 0, p.z + (Math.random()-0.5)*10);
+		if (!pos) pos = new THREE.Vector3(p.x + (Math.random() - 0.5) * 10, 0, p.z + (Math.random() - 0.5) * 10);
 		// VFX: portal ring kecil dan partikel debu dari tanah
 		const ringGeo = new THREE.RingGeometry(0.2, 0.25, 32);
 		const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
-		const ring = new THREE.Mesh(ringGeo, ringMat); ring.rotation.x = -Math.PI/2; ring.position.set(pos.x, 0.02, pos.z);
+		const ring = new THREE.Mesh(ringGeo, ringMat); ring.rotation.x = -Math.PI / 2; ring.position.set(pos.x, 0.02, pos.z);
 		this.scene.add(ring);
 		const dust = this._spawnDebris(new THREE.Vector3(pos.x, 0.05, pos.z), 30);
-		try { this.audio.summon(); } catch(_) {}
+		try { this.audio.summon(); } catch (_) { }
 		// Beacon cahaya
-		const beacon = new THREE.SpotLight(0x38bdf8, 2.0, 20, Math.PI/5, 0.5, 1.2);
+		const beacon = new THREE.SpotLight(0x38bdf8, 2.0, 20, Math.PI / 5, 0.5, 1.2);
 		beacon.position.set(pos.x, 4, pos.z);
 		beacon.target.position.set(pos.x, 0, pos.z);
 		this.scene.add(beacon); this.scene.add(beacon.target);
-		let t=0; const tick=()=>{
-			if (t>1) { this.scene.remove(ring); ring.geometry.dispose(); ring.material.dispose(); return; }
-			ring.scale.setScalar(THREE.MathUtils.lerp(1, 6, t)); ring.material.opacity = 0.9*(1-t);
+		let t = 0; const tick = () => {
+			if (t > 1) { this.scene.remove(ring); ring.geometry.dispose(); ring.material.dispose(); return; }
+			ring.scale.setScalar(THREE.MathUtils.lerp(1, 6, t)); ring.material.opacity = 0.9 * (1 - t);
 			beacon.intensity = 2.0 * (1 - t);
-			t+=0.06; requestAnimationFrame(tick);
+			t += 0.06; requestAnimationFrame(tick);
 		}; tick();
-		setTimeout(()=>{ this.scene.remove(dust.obj); dust.dispose(); }, 500);
+		setTimeout(() => { this.scene.remove(dust.obj); dust.dispose(); }, 500);
 		// munculnya ally dari tanah: lerp Y dari -0.5 ke 1 (tinggi badan 1)
-		setTimeout(()=>{
+		setTimeout(() => {
 			const ally = new Ally(this.scene, pos);
+			ally.team = this.player.team; // Assign Team
 			this.world.allies.push(ally);
 			// juga tambah ke cache scene
 			if (!this.scene.userData) this.scene.userData = {};
 			if (!this.scene.userData._alliesList) this.scene.userData._alliesList = [];
 			this.scene.userData._alliesList.push(ally);
-			if (ally.mesh) { ally.mesh.position.y = -0.5; let k=0; const rise=()=>{ if (k>=1) return; k+=0.06; ally.mesh.position.y = THREE.MathUtils.lerp(-0.5, 1, k); requestAnimationFrame(rise); }; rise(); }
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
-			setTimeout(()=>{ this.scene.remove(beacon); this.scene.remove(beacon.target); }, 600);
+			if (ally.mesh) { ally.mesh.position.y = -0.5; let k = 0; const rise = () => { if (k >= 1) return; k += 0.06; ally.mesh.position.y = THREE.MathUtils.lerp(-0.5, 1, k); requestAnimationFrame(rise); }; rise(); }
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
+			setTimeout(() => { this.scene.remove(beacon); this.scene.remove(beacon.target); }, 600);
 		}, 180);
 	}
 
 	updateAllies(dt) {
 		const playerPos = this.controls.getObject().position;
 		const difficultyMultiplier = (this.config.difficulty === 'hard') ? 1.25 : (this.config.difficulty === 'insane' ? 1.6 : 1.0);
-		const worldCenter = new THREE.Vector3(0,1,0);
+		const worldCenter = new THREE.Vector3(0, 1, 0);
 		const context = { playerPos, enemies: this.world.enemies, obstacles: this.world.obstacles, pickups: this.world.pickups, difficultyMultiplier, worldCenter };
 		// Thinning: on low-end, only update a subset of allies each frame (round-robin)
 		const allySkip = this._lowEnd ? 2 : 1;
@@ -1383,13 +1693,13 @@ export default class Game {
 					const dead = action.target.applyDamage(dmg);
 					if (dead) {
 						this.addScore(6);
-						ally.kills = (ally.kills||0) + 1;
+						ally.kills = (ally.kills || 0) + 1;
 						// catat kill untuk killstreak & wave accounting
-						try { this.onEnemyKilled(); } catch(_) {}
-						try { this.recordEnemyDeath(action.target); } catch(_) {}
+						try { this.onEnemyKilled(); } catch (_) { }
+						try { this.recordEnemyDeath(action.target); } catch (_) { }
 						this.removeEnemy(action.target);
-						try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
-						try { if (this.waveState === 'idle') { this.spawnEnemy(); } } catch(_) { /* ignore fallback when spawn blocked */ }
+						try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
+						try { if (this.waveState === 'idle') { this.spawnEnemy(); } } catch (_) { /* ignore fallback when spawn blocked */ }
 					}
 				} else {
 					const missAng = (Math.random() - 0.5) * 0.35; const rot = new THREE.Matrix4().makeRotationY(missAng);
@@ -1415,8 +1725,12 @@ export default class Game {
 			if (this._lowEnd && (ei % enemySkip) !== this._enemyPhase) continue;
 			const enemy = this.world.enemies[ei];
 			const act = enemy.update(dt, playerPos, this.world.obstacles, this._obstacleMeshes, { grenades: this.world.grenades, skill: dynamicSkill, playerMoving, difficultyMultiplier });
+
+			// Update logic usually handles target selection, but let's ensure 'enemy' knows its team
+			enemy.team = (this.player.team === 'RED' ? 'BLUE' : 'RED');
+
 			if (act.contact) {
-				this.takePlayerDamage(this.damageByDifficulty(10, 5) * dt, enemy.mesh.position.clone());
+				this.takePlayerDamage(this.damageByDifficulty(10, 5) * dt, enemy.mesh.position.clone(), enemy.team);
 			}
 			if (act.shoot) {
 				let target = { pos: playerPos, isPlayer: true };
@@ -1431,12 +1745,12 @@ export default class Game {
 					if (!origin.y || origin.y < 0.6) origin.y = 1.6;
 					const dir = target.pos.clone().sub(origin).setY(0).normalize();
 					const spread = (1 - (act.acc ?? 0.6)) * 0.15;
-					const ang = (Math.random()-0.5) * spread;
+					const ang = (Math.random() - 0.5) * spread;
 					const rot = new THREE.Matrix4().makeRotationY(ang);
 					const d3 = dir.clone().applyMatrix4(rot);
 					const end = origin.clone().add(d3.multiplyScalar(nd));
 					this.spawnTracer(origin, end, 0xff6b6b);
-					try { this.spawnHitSparks(new THREE.Vector3(origin.x, origin.y + 0.05, origin.z), 4, 0xff6b6b); } catch(_) {}
+					try { this.spawnHitSparks(new THREE.Vector3(origin.x, origin.y + 0.05, origin.z), 4, 0xff6b6b); } catch (_) { }
 					this.showShotIndicator(enemy.mesh.position.clone());
 					this.playEnemyShotAudio(enemy.mesh.position.clone());
 					this.spawnEnemyMuzzleFlash(enemy.mesh.position.clone());
@@ -1445,10 +1759,10 @@ export default class Game {
 				if (target.isPlayer) {
 					const hitProb = Math.max(0.1, Math.min(0.9, (act.acc ?? 0.6)));
 					if (Math.random() < hitProb) {
-						this.takePlayerDamage(this.damageByDifficulty(8, 6), enemy.mesh.position.clone());
-						try { this.audio.ricochet(); } catch(_) {}
+						this.takePlayerDamage(this.damageByDifficulty(8, 6), enemy.mesh.position.clone(), enemy.team);
+						try { this.audio.ricochet(); } catch (_) { }
 						if (this.player.health <= 0) { this.gameOver(); return; }
-						try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+						try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 					}
 				} else if (target.ally) {
 					const hitProbA = Math.max(0.1, Math.min(0.9, (act.acc ?? 0.6)) * 0.95);
@@ -1462,19 +1776,19 @@ export default class Game {
 		if (this._lowEnd) this._enemyPhase = (this._enemyPhase + 1) % enemySkip;
 	}
 
-	updateGrenades(dt){
+	updateGrenades(dt) {
 		for (const g of [...this.world.grenades]) {
-			if (!g.alive) { this.world.grenades = this.world.grenades.filter(x=>x!==g); continue; }
+			if (!g.alive) { this.world.grenades = this.world.grenades.filter(x => x !== g); continue; }
 			g.update(dt);
-			if (!g.alive) { this.world.grenades = this.world.grenades.filter(x=>x!==g); }
+			if (!g.alive) { this.world.grenades = this.world.grenades.filter(x => x !== g); }
 		}
 	}
 
 	// ====== Grenade trajectory prediction ======
-	initGrenadeTrajectory(){
+	initGrenadeTrajectory() {
 		if (this.weapon.trajLine) return;
 		const segments = 30;
-		this.weapon.trajPositions = new Float32Array((segments+1) * 3);
+		this.weapon.trajPositions = new Float32Array((segments + 1) * 3);
 		const geom = new THREE.BufferGeometry();
 		geom.setAttribute('position', new THREE.BufferAttribute(this.weapon.trajPositions, 3));
 		const mat = new THREE.LineBasicMaterial({ color: 0x9ae66e, transparent: true, opacity: 0.85 });
@@ -1484,13 +1798,15 @@ export default class Game {
 		if (!this.weapon.trajImpact) {
 			const rim = new THREE.RingGeometry(0.18, 0.22, 32);
 			const rimMat = new THREE.MeshBasicMaterial({ color: 0x9ae66e, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-			const ring = new THREE.Mesh(rim, rimMat); ring.rotation.x = -Math.PI/2; ring.visible = false;
+			const ring = new THREE.Mesh(rim, rimMat); ring.rotation.x = -Math.PI / 2; ring.visible = false;
 			this.weapon.trajImpact = ring; this.scene.add(ring);
 		}
 	}
 
-	clearGrenadeTrajectory(){
-		if (!this.weapon.trajLine) return;
+	clearGrenadeTrajectory() {
+		// Fix (Guard Clause): Check if grenade system/weapon exists
+		if (!this.weapon || !this.weapon.trajLine) return;
+
 		this.scene.remove(this.weapon.trajLine);
 		this.weapon.trajLine.geometry.dispose();
 		this.weapon.trajLine.material.dispose();
@@ -1499,14 +1815,17 @@ export default class Game {
 		if (this.weapon.trajImpact) this.weapon.trajImpact.visible = false;
 	}
 
-	updateGrenadeAim(dt){
+	updateGrenadeAim(dt) {
+		// Fix (Guard Clause): Safety check before accessing player/weapon properties
+		if (!this.player || !this.weapon) return;
+
 		// tampilkan hanya saat senjata granat aktif dan tombol mouse kiri ditekan (menahan untuk aim)
 		if (this.player.weapon !== 'grenade') { this.clearGrenadeTrajectory(); return; }
 		if (!this.input.shoot) { this.clearGrenadeTrajectory(); return; }
 		this.initGrenadeTrajectory();
 		if (!this.weapon.trajLine) return;
 		const positions = this.weapon.trajLine.geometry.attributes.position.array;
-		const segments = positions.length/3 - 1;
+		const segments = positions.length / 3 - 1;
 		// ambil start & velocity sama seperti saat lempar
 		const start = this.weapon.muzzle.getWorldPosition(new THREE.Vector3());
 		const dir = new THREE.Vector3(); this.camera.getWorldDirection(dir);
@@ -1516,8 +1835,8 @@ export default class Game {
 		let p = start.clone(); let v = vel.clone();
 		const step = 0.05;
 		let impact = null;
-		for (let i=0;i<=segments;i++){
-			positions[i*3+0] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+		for (let i = 0; i <= segments; i++) {
+			positions[i * 3 + 0] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z;
 			// integrasi euler kecil untuk preview
 			v.y += g * step;
 			const next = p.clone().addScaledVector(v, step);
@@ -1548,7 +1867,7 @@ export default class Game {
 			if (hit) {
 				if (!impact) impact = p.clone();
 				// isi sisa titik dengan posisi impact
-				for (let j=i+1;j<=segments;j++){ positions[j*3+0]=p.x; positions[j*3+1]=p.y; positions[j*3+2]=p.z; }
+				for (let j = i + 1; j <= segments; j++) { positions[j * 3 + 0] = p.x; positions[j * 3 + 1] = p.y; positions[j * 3 + 2] = p.z; }
 				break;
 			}
 		}
@@ -1571,10 +1890,10 @@ export default class Game {
 		indicator.style.transform = `translate(-50%,-50%) rotate(${angle}rad)`;
 		indicator.classList.add('visible');
 		clearTimeout(this._shotIndicatorTimer);
-		this._shotIndicatorTimer = setTimeout(()=>indicator.classList.remove('visible'), 280);
+		this._shotIndicatorTimer = setTimeout(() => indicator.classList.remove('visible'), 280);
 	}
 
-	playEnemyShotAudio(fromPos){
+	playEnemyShotAudio(fromPos) {
 		const now = performance.now();
 		if (now - this._lastEnemyShotSfxMs < 70) return; // throttle suara musuh
 		this._lastEnemyShotSfxMs = now;
@@ -1583,7 +1902,7 @@ export default class Game {
 			const ctx = this.audio.ctx;
 			const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
 			const gain = ctx.createGain(); gain.gain.value = 0.12; // reduced
-			const osc = ctx.createOscillator(); osc.type='square'; osc.frequency.value=260;
+			const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = 260;
 			if (panner) {
 				// pan berdasarkan posisi relatif X
 				const relX = fromPos.x - this.controls.getObject().position.x;
@@ -1594,12 +1913,12 @@ export default class Game {
 				osc.connect(gain).connect(this.audio.sfxGain);
 			}
 			osc.start();
-			setTimeout(()=>{ try{ osc.stop(); gain.disconnect(); if (panner) panner.disconnect(); }catch(e){} }, 120);
-		} catch(_){}
+			setTimeout(() => { try { osc.stop(); gain.disconnect(); if (panner) panner.disconnect(); } catch (e) { } }, 120);
+		} catch (_) { }
 	}
 
 	updatePickups(dt) {
-		try { const impl = this.updatePickups; const proto = Object.getPrototypeOf(this).updatePickups; if (impl && impl !== proto) return impl.call(this, dt); } catch(_){}
+		try { const impl = this.updatePickups; const proto = Object.getPrototypeOf(this).updatePickups; if (impl && impl !== proto) return impl.call(this, dt); } catch (_) { }
 		// fallback: no-op
 	}
 
@@ -1608,15 +1927,15 @@ export default class Game {
 		const geo = new THREE.BufferGeometry();
 		const positions = new Float32Array(count * 3);
 		for (let i = 0; i < count; i++) {
-			positions[i*3+0] = (Math.random()-0.5) * this.world.bounds * 2;
-			positions[i*3+1] = Math.random() * 6 + 1;
-			positions[i*3+2] = (Math.random()-0.5) * this.world.bounds * 2;
+			positions[i * 3 + 0] = (Math.random() - 0.5) * this.world.bounds * 2;
+			positions[i * 3 + 1] = Math.random() * 6 + 1;
+			positions[i * 3 + 2] = (Math.random() - 0.5) * this.world.bounds * 2;
 		}
 		geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 		const mat = new THREE.PointsMaterial({ color: 0x8fb3ff, size: 0.05, transparent: true, opacity: 0.5 });
 		this.particles = new THREE.Points(geo, mat);
 		// allow frustum culling so particles stop rendering when offscreen
-		try { this.particles.frustumCulled = true; } catch(_){}
+		try { this.particles.frustumCulled = true; } catch (_) { }
 		this.scene.add(this.particles);
 	}
 
@@ -1631,31 +1950,31 @@ export default class Game {
 
 	gameOver() {
 		this.player.health = 0;
-		try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+		try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 		this.startDeathAnim();
 	}
 
-	startDeathAnim(){
+	startDeathAnim() {
 		if (this._deathAnim.active) return;
-		this._deathAnim = { active:true, t:0 };
-		try { this.audio.duckBgm(0.2, 800); this.audio.playerHurt(); } catch(_) {}
+		this._deathAnim = { active: true, t: 0 };
+		try { this.audio.duckBgm(0.2, 800); this.audio.playerHurt(); } catch (_) { }
 	}
 
-	updateDeathAnim(dt){
+	updateDeathAnim(dt) {
 		if (!this._deathAnim.active) return;
 		const d = this._deathAnim; d.t += dt;
 		// kamera jatuh ke samping + turun
 		const k = Math.min(1, d.t / 1.0);
 		const fall = THREE.MathUtils.smoothstep(k, 0, 1);
 		const camObj = this.controls.getObject();
-		camObj.position.y = THREE.MathUtils.lerp( this.player.y, Math.max(0.4, this.player.y - 1.0), fall);
+		camObj.position.y = THREE.MathUtils.lerp(this.player.y, Math.max(0.4, this.player.y - 1.0), fall);
 		this.camera.rotation.z = THREE.MathUtils.lerp(0, 0.9, fall);
 		// layar fade gelap via transition overlay
-		if (k > 0.2){
+		if (k > 0.2) {
 			const el = document.getElementById('transition');
-			if (el){ el.classList.remove('hidden'); el.style.transition = 'opacity 0.8s ease'; el.style.background = '#000'; el.style.opacity = Math.min(1, (k-0.2)/0.6); }
+			if (el) { el.classList.remove('hidden'); el.style.transition = 'opacity 0.8s ease'; el.style.background = '#000'; el.style.opacity = Math.min(1, (k - 0.2) / 0.6); }
 		}
-		if (k >= 1.0){
+		if (k >= 1.0) {
 			this._deathAnim.active = false;
 			this.animating = false;
 			this.controls.unlock();
@@ -1664,27 +1983,27 @@ export default class Game {
 	}
 
 	updateHUD() {
-		try { const impl = this.updateHUD; const proto = Object.getPrototypeOf(this).updateHUD; if (impl && impl !== proto) return impl.call(this); } catch(_){}
+		try { const impl = this.updateHUD; const proto = Object.getPrototypeOf(this).updateHUD; if (impl && impl !== proto) return impl.call(this); } catch (_) { }
 	}
 
-	pulseHitVignette(fromPos){
+	pulseHitVignette(fromPos) {
 		const el = document.getElementById('hitVignette'); if (!el) return;
 		el.classList.remove('hidden'); el.classList.add('show');
 		clearTimeout(this._hitVigTimer);
-		this._hitVigTimer = setTimeout(()=>{ el.classList.remove('show'); el.classList.add('hidden'); }, 180);
+		this._hitVigTimer = setTimeout(() => { el.classList.remove('show'); el.classList.add('hidden'); }, 180);
 	}
 
-	spawnEnemyMuzzleFlash(pos){
+	spawnEnemyMuzzleFlash(pos) {
 		const flash = new THREE.PointLight(0xff6b6b, 2.0, 6);
 		flash.position.copy(new THREE.Vector3(pos.x, 1.6, pos.z));
 		this.scene.add(flash);
-		try { this.flashBloom(0.6, 0.08); } catch(_) {}
-		try { this.spawnHitSparks(new THREE.Vector3(pos.x, 1.6, pos.z), 6, 0xff6b6b); } catch(_) {}
-		setTimeout(()=> this.scene.remove(flash), 60);
+		try { this.flashBloom(0.6, 0.08); } catch (_) { }
+		try { this.spawnHitSparks(new THREE.Vector3(pos.x, 1.6, pos.z), 6, 0xff6b6b); } catch (_) { }
+		setTimeout(() => this.scene.remove(flash), 60);
 	}
 
-	spawnMuzzleLight(){
-		try { if (this._activeMuzzleLight) { this.scene.remove(this._activeMuzzleLight); this._activeMuzzleLight = null; } } catch(_) {}
+	spawnMuzzleLight() {
+		try { if (this._activeMuzzleLight) { this.scene.remove(this._activeMuzzleLight); this._activeMuzzleLight = null; } } catch (_) { }
 		const light = new THREE.PointLight(0xfff1a8, 1.2, 4); // reduced intensity and range
 		light.position.copy(this.weapon.muzzle.getWorldPosition(new THREE.Vector3()));
 		this.scene.add(light); this._activeMuzzleLight = light;
@@ -1696,101 +2015,103 @@ export default class Game {
 			spr.scale.set(0.16, 0.16, 1); // smaller flash sprite
 			spr.position.copy(light.position);
 			this.scene.add(spr);
-			setTimeout(()=>{ try{ this.scene.remove(spr); mat.dispose(); }catch(_){} }, 60); // shorter lifetime
-		} catch(_) {}
-		setTimeout(()=>{ try{ this.scene.remove(light); if (this._activeMuzzleLight===light) this._activeMuzzleLight=null; }catch(_){} }, 40); // shorter
+			setTimeout(() => { try { this.scene.remove(spr); mat.dispose(); } catch (_) { } }, 60); // shorter lifetime
+		} catch (_) { }
+		setTimeout(() => { try { this.scene.remove(light); if (this._activeMuzzleLight === light) this._activeMuzzleLight = null; } catch (_) { } }, 40); // shorter
 	}
 
-	spawnMuzzleSmoke(){
+	spawnMuzzleSmoke() {
 		const tex = this._getSmokeTexture();
 		const mat = new THREE.SpriteMaterial({ map: tex, color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false }); // slightly dimmer
 		const spr = new THREE.Sprite(mat);
 		spr.scale.set(0.36, 0.36, 1); // smaller smoke
 		spr.position.copy(this.weapon.muzzle.getWorldPosition(new THREE.Vector3()));
 		this.scene.add(spr);
-		let t=0; const tick=()=>{
-			if (t>1){ this.scene.remove(spr); mat.dispose(); return; }
+		let t = 0; const tick = () => {
+			if (t > 1) { this.scene.remove(spr); mat.dispose(); return; }
 			spr.material.opacity = 0.45 * (1 - t);
 			spr.scale.setScalar(THREE.MathUtils.lerp(0.36, 1.4, t));
 			spr.position.y += 0.002;
-			t+=0.09; requestAnimationFrame(tick);
+			t += 0.09; requestAnimationFrame(tick);
 		}; tick();
 	}
 
-	ejectCasing(){
+	ejectCasing() {
 		if (!this._casingPool) return;
-		let entry = this._casingPool.find(x=>!x.busy);
+		let entry = this._casingPool.find(x => !x.busy);
 		if (!entry) entry = this._casingPool[0];
 		const mesh = entry.obj;
 		const origin = this.weapon.group.localToWorld(new THREE.Vector3(-0.06, -0.02, -0.1));
 		mesh.position.copy(origin); mesh.visible = true;
 		entry.busy = true; entry.ttl = 0.6;
-		entry.vel.set(-0.5 + Math.random()*-0.6, 0.8 + Math.random()*0.5, -0.2 + Math.random()*0.4);
-		entry.rotSpeed.set(0.2 + Math.random()*0.3, 0.2 + Math.random()*0.4, 0.1 + Math.random()*0.3);
+		entry.vel.set(-0.5 + Math.random() * -0.6, 0.8 + Math.random() * 0.5, -0.2 + Math.random() * 0.4);
+		entry.rotSpeed.set(0.2 + Math.random() * 0.3, 0.2 + Math.random() * 0.4, 0.1 + Math.random() * 0.3);
 	}
 
-	spawnImpactDecal(point){
+	spawnImpactDecal(point) {
 		if (!point) return;
 		if (!this._decalPool) return;
-		let entry = this._decalPool.find(x=>!x.busy);
+		let entry = this._decalPool.find(x => !x.busy);
 		if (!entry) entry = this._decalPool[0];
 		const mesh = entry.obj;
 		mesh.position.set(point.x, point.y + 0.01, point.z);
 		mesh.visible = true; entry.busy = true; entry.ttl = 0.4;
 	}
 
-	updateCameraShake(dt){
+	updateCameraShake(dt) {
 		// decay amplitude
 		this.shake.amp = Math.max(0, this.shake.amp - this.shake.decay * dt);
 		this._shakeTime += dt * 60;
 		const a = this.shake.amp;
-		if (a > 0.0001){
+		if (a > 0.0001) {
 			const n1 = Math.sin(this._shakeTime * 0.13);
 			const n2 = Math.sin(this._shakeTime * 0.29 + 1.7);
 			const n3 = Math.sin(this._shakeTime * 0.47 + 0.6);
-			const offX = (n1*0.4 + n2*0.6) * 0.004 * a;
-			const offY = (n2*0.5 + n3*0.5) * 0.003 * a;
-			const offZ = (n1*0.3 + n3*0.7) * 0.002 * a;
+			const offX = (n1 * 0.4 + n2 * 0.6) * 0.004 * a;
+			const offY = (n2 * 0.5 + n3 * 0.5) * 0.003 * a;
+			const offZ = (n1 * 0.3 + n3 * 0.7) * 0.002 * a;
 			this._shakeOffset.set(offX, offY, offZ);
 			this.camera.position.add(this._shakeOffset);
 			// FOV punch ringan
 			this.camera.fov = THREE.MathUtils.lerp(this._fovBase, this._fovBase + 1.8 * a, 0.6);
 			this.camera.updateProjectionMatrix();
 		}
-		else if (this.camera.fov !== this._fovBase){
+		else if (this.camera.fov !== this._fovBase) {
 			this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this._fovBase, 0.2);
 			this.camera.updateProjectionMatrix();
 		}
 	}
 
-	queueWeaponSwitch(target, label='Pistol', hint='[1]'){
+	queueWeaponSwitch(target, label = 'Pistol', hint = '[1]') {
 		if (this._switchAnim.active || this.player.weapon === target || this.player.reloading) { return; }
 		this._switchAnim.active = true; this._switchAnim.t = 0; this._switchAnim.dir = -1; this._switchAnim.duration = 0.16; this._switchAnim.target = target;
 		this._switchAnim.onComplete = () => {
-			this.player.weapon = target; try { this.markHudDirty(); } catch(_) {}
+			this.player.weapon = target; try { this.markHudDirty(); } catch (_) { }
 			// update HUD weapon pill (use simple emoji icons)
-			try { if (this.hud && typeof this.hud.setWeapon === 'function') {
-				const icon = (target === 'grenade') ? '💣' : '🔫';
-				this.hud.setWeapon(label || (target==='grenade'?'Granat':'Pistol'), icon);
-			} } catch(_) {}
+			try {
+				if (this.hud && typeof this.hud.setWeapon === 'function') {
+					const icon = (target === 'grenade') ? '💣' : '🔫';
+					this.hud.setWeapon(label || (target === 'grenade' ? 'Granat' : 'Pistol'), icon);
+				}
+			} catch (_) { }
 			this._switchAnim.dir = 1; this._switchAnim.t = 0; this._switchAnim.duration = 0.14;
 		};
-		try { this.audio.weaponSwitch(); this.audio.duckBgm(0.6, 180); } catch(_) {}
+		try { this.audio.weaponSwitch(); this.audio.duckBgm(0.6, 180); } catch (_) { }
 		// toast UI
 		this.showWeaponToast(label, hint);
 	}
 
-	showWeaponToast(label, hint){
+	showWeaponToast(label, hint) {
 		const el = document.getElementById('weaponToast'); if (!el) return;
 		el.querySelector('.label').textContent = label;
 		el.querySelector('.sub').textContent = hint;
 		el.classList.remove('hidden');
 		el.classList.add('show');
 		clearTimeout(this._toastTimer);
-		this._toastTimer = setTimeout(()=>{ el.classList.add('hidden'); el.classList.remove('show'); }, 1300);
+		this._toastTimer = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('show'); }, 1300);
 	}
 
-	updateWeaponSwitch(dt){
+	updateWeaponSwitch(dt) {
 		if (!this._switchAnim.active || !this.weapon) return;
 		const a = this._switchAnim;
 		a.t += dt;
@@ -1804,100 +2125,103 @@ export default class Game {
 		const bp = this.weapon.basePos; const br = this.weapon.baseRot;
 		this.weapon.group.position.set(bp.x, bp.y + drop, bp.z);
 		this.weapon.group.rotation.set(br.x + tilt, br.y, br.z);
-		if (k >= 1){
+		if (k >= 1) {
 			if (dir < 0 && typeof a.onComplete === 'function') { const cb = a.onComplete; a.onComplete = null; cb(); a.t = 0; return; }
 			if (dir > 0) { a.active = false; }
 		}
 	}
 
-	onEnemyKilled(){
+	onEnemyKilled() {
 		// killstreak
 		this._streak.count += 1; this._streak.timer = 3.0;
-		if (this._streak.count>=2){ this.showStreakToast(`Killstreak x${this._streak.count}!`); try{ this.audio.streak(); }catch(_){} }
+		if (this._streak.count >= 2) { this.showStreakToast(`Killstreak x${this._streak.count}!`); try { this.audio.streak(); } catch (_) { } }
 	}
 
-	showStreakToast(text){ const el=document.getElementById('streakToast'); if(!el) return; el.textContent=text; el.classList.remove('hidden'); el.classList.add('show'); clearTimeout(this._streakToastTimer); this._streakToastTimer=setTimeout(()=>{ el.classList.add('hidden'); el.classList.remove('show'); }, 1600); }
+	showStreakToast(text) { const el = document.getElementById('streakToast'); if (!el) return; el.textContent = text; el.classList.remove('hidden'); el.classList.add('show'); clearTimeout(this._streakToastTimer); this._streakToastTimer = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('show'); }, 1600); }
 
-	updatePowerups(dt){
+	updatePowerups(dt) {
 		// timer decrease
-		for (const k of Object.keys(this.powerups)){ if (this.powerups[k]>0) this.powerups[k]=Math.max(0,this.powerups[k]-dt); }
+		for (const k of Object.keys(this.powerups)) { if (this.powerups[k] > 0) this.powerups[k] = Math.max(0, this.powerups[k] - dt); }
 		// streak timer decay
-		if (this._streak.timer>0){ this._streak.timer-=dt; if (this._streak.timer<=0) this._streak.count=0; }
+		if (this._streak.timer > 0) { this._streak.timer -= dt; if (this._streak.timer <= 0) this._streak.count = 0; }
 		// render HUD
-		const wrap = document.getElementById('powerups'); if (!wrap) return; wrap.innerHTML='';
-		const active = Object.entries(this.powerups).filter(([k,v])=>v>0);
-		if (active.length===0){ wrap.classList.add('hidden'); return; }
+		const wrap = document.getElementById('powerups'); if (!wrap) return; wrap.innerHTML = '';
+		const active = Object.entries(this.powerups).filter(([k, v]) => v > 0);
+		if (active.length === 0) { wrap.classList.add('hidden'); return; }
 		wrap.classList.remove('hidden');
-		for (const [k,v] of active){ const d=document.createElement('div'); d.className='pu'; d.textContent=`${k.toUpperCase()} ${Math.ceil(v)}s`; wrap.appendChild(d); }
+		for (const [k, v] of active) { const d = document.createElement('div'); d.className = 'pu'; d.textContent = `${k.toUpperCase()} ${Math.ceil(v)}s`; wrap.appendChild(d); }
 	}
 
-	takePlayerDamage(amount, fromPos){
+	takePlayerDamage(amount, fromPos, shooterTeam) {
+		// Friendly Fire Check
+		if (shooterTeam && this.player.team && shooterTeam === this.player.team) return;
+
 		let dmg = amount;
-		if (this.perks && this.perks.shield > 0){
+		if (this.perks && this.perks.shield > 0) {
 			const use = Math.min(this.perks.shield, dmg);
 			this.perks.shield -= use; dmg -= use;
 		}
-		if (dmg > 0){
+		if (dmg > 0) {
 			this.player.health -= dmg;
 		}
-		this.pulseHitVignette(fromPos||this.controls.getObject().position.clone());
+		this.pulseHitVignette(fromPos || this.controls.getObject().position.clone());
 		const nowMs = performance.now();
-		if (nowMs - this._lastHurtSfxMs > 140) { try { this.audio.playerHurt(); } catch(_) {} this._lastHurtSfxMs = nowMs; }
+		if (nowMs - this._lastHurtSfxMs > 140) { try { this.audio.playerHurt(); } catch (_) { } this._lastHurtSfxMs = nowMs; }
 		if (this.player.health <= 0) { this.gameOver(); return; }
-		try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
+		try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
 	}
 
 	// ===== Pools for short-lived effects to reduce allocations =====
 	_initPools() {
-		try { const impl = this._initPools; const proto = Object.getPrototypeOf(this)._initPools; if (impl && impl !== proto) return impl.call(this); } catch(_){}
+		try { const impl = this._initPools; const proto = Object.getPrototypeOf(this)._initPools; if (impl && impl !== proto) return impl.call(this); } catch (_) { }
 	}
 
-	_poolTick(dt){
-		try { const impl = this._poolTick; const proto = Object.getPrototypeOf(this)._poolTick; if (impl && impl !== proto) return impl.call(this, dt); } catch(_){}
+	_poolTick(dt) {
+		try { const impl = this._poolTick; const proto = Object.getPrototypeOf(this)._poolTick; if (impl && impl !== proto) return impl.call(this, dt); } catch (_) { }
 	}
 
-	_getSparkTexture(){
+	_getSparkTexture() {
 		if (this._sparkTex) return this._sparkTex;
-		const size = 64; const data = new Uint8Array(size*size*4);
-		for (let y=0;y<size;y++){
-			for (let x=0;x<size;x++){
-				const i = (y*size + x)*4;
-				const dx = (x - size/2)/(size/2);
-				const dy = (y - size/2)/(size/2);
-				const d = Math.sqrt(dx*dx + dy*dy);
+		const size = 64; const data = new Uint8Array(size * size * 4);
+		for (let y = 0; y < size; y++) {
+			for (let x = 0; x < size; x++) {
+				const i = (y * size + x) * 4;
+				const dx = (x - size / 2) / (size / 2);
+				const dy = (y - size / 2) / (size / 2);
+				const d = Math.sqrt(dx * dx + dy * dy);
 				const a = Math.max(0, 1 - d);
 				const alpha = Math.pow(a, 2.2);
-				data[i] = 255; data[i+1] = 241; data[i+2] = 168; data[i+3] = Math.floor(alpha * 255);
+				data[i] = 255; data[i + 1] = 241; data[i + 2] = 168; data[i + 3] = Math.floor(alpha * 255);
 			}
 		}
 		this._sparkTex = new THREE.DataTexture(data, size, size); this._sparkTex.needsUpdate = true; this._sparkTex.minFilter = THREE.LinearFilter; this._sparkTex.magFilter = THREE.LinearFilter; return this._sparkTex;
 	}
 
-	flashBloom(amount = 0.8, duration = 0.12){
+	flashBloom(amount = 0.8, duration = 0.12) {
 		try {
 			if (!this.bloom) return;
 			const orig = this.bloom.strength;
 			this.bloom.strength = Math.min(2.5, orig + amount);
-			setTimeout(()=>{ try { this.bloom.strength = orig; } catch(_){} }, duration*1000);
-		} catch(_){}
+			setTimeout(() => { try { this.bloom.strength = orig; } catch (_) { } }, duration * 1000);
+		} catch (_) { }
 	}
 
 	// spawnBeam: lebih tebal/terang untuk efek laser/energy (reuses tracer pool)
 	spawnBeam(start, end, color = 0xffffff, duration = 0.12) {
 		if (!this._tracerPool) return;
-		let entry = this._tracerPool.find(x=>!x.busy);
+		let entry = this._tracerPool.find(x => !x.busy);
 		if (!entry) entry = this._tracerPool[0];
 		const line = entry.obj;
 		const posAttr = line.geometry.attributes.position.array;
 		posAttr[0] = start.x; posAttr[1] = start.y; posAttr[2] = start.z;
-		const toVec = end ? end : start.clone().add(new THREE.Vector3(0,0,-1));
+		const toVec = end ? end : start.clone().add(new THREE.Vector3(0, 0, -1));
 		posAttr[3] = toVec.x; posAttr[4] = toVec.y; posAttr[5] = toVec.z;
 		line.geometry.attributes.position.needsUpdate = true;
 		line.material.color.setHex(color);
 		line.material.opacity = 0.95;
 		line.visible = true; entry.busy = true; entry.ttl = duration;
 		// slight glow via bloom boost
-		try { this.flashBloom(0.35, duration*0.9); } catch(_) {}
+		try { this.flashBloom(0.35, duration * 0.9); } catch (_) { }
 	}
 
 	// Poisson-like sampling around player to avoid clumping (fast approximation)
@@ -1916,7 +2240,7 @@ export default class Game {
 		return new THREE.Vector3(center.x + Math.cos(ang) * rr, 0, center.z + Math.sin(ang) * rr);
 	}
 
-	openChatPrompt(force = false){
+	openChatPrompt(force = false) {
 		// fallback: open chat overlay input for non-blocking entry
 		try {
 			const menuEl = (typeof document !== 'undefined') ? document.getElementById('menu') : null;
@@ -1925,13 +2249,13 @@ export default class Game {
 			if (w) {
 				w.style.display = (w.style.display === 'none' ? 'flex' : 'none');
 				const inp = document.getElementById('chatInput');
-				if (w.style.display !== 'none') { if (inp) inp.focus(); try{ this.updateChatAllyList(); } catch(_){} }
+				if (w.style.display !== 'none') { if (inp) inp.focus(); try { this.updateChatAllyList(); } catch (_) { } }
 			}
-		} catch(_){ }
+		} catch (_) { }
 	}
 
 	// basic parser: map keywords to ally actions
-	sendChatToAllies(msg){
+	sendChatToAllies(msg) {
 		// block chat commands when main menu visible or paused
 		const menuEl = (typeof document !== 'undefined') ? document.getElementById('menu') : null;
 		if ((menuEl && !menuEl.classList.contains('hidden')) || (typeof document !== 'undefined' && document.body.classList.contains('paused'))) return;
@@ -1945,70 +2269,70 @@ export default class Game {
 				if (isAttack) {
 					ally.showChatMessage('Attack!', 1400);
 					// find nearest enemy and engage
-					let ne=null, nd=Infinity; for (const e of this.world.enemies){ const d=e.mesh.position.distanceTo(ally.mesh.position); if (d<nd){ nd=d; ne=e; } }
-					if (ne) { ally.state='engage'; ally.targetEnemy = ne; ally.nextThink = 0.04; }
+					let ne = null, nd = Infinity; for (const e of this.world.enemies) { const d = e.mesh.position.distanceTo(ally.mesh.position); if (d < nd) { nd = d; ne = e; } }
+					if (ne) { ally.state = 'engage'; ally.targetEnemy = ne; ally.nextThink = 0.04; }
 					// log ally reply
-					try { this.addChatLog(ally.name, 'Enemy spotted!', 'ally'); } catch(_){ }
+					try { this.addChatLog(ally.name, 'Enemy spotted!', 'ally'); } catch (_) { }
 				} else if (isHold) {
 					ally.showChatMessage('Holding', 1200);
-					ally.state='hold'; ally.waypoint = ally.mesh.position.clone(); ally.targetEnemy = null;
-					try { this.addChatLog(ally.name, 'Holding position', 'ally'); } catch(_){ }
+					ally.state = 'hold'; ally.waypoint = ally.mesh.position.clone(); ally.targetEnemy = null;
+					try { this.addChatLog(ally.name, 'Holding position', 'ally'); } catch (_) { }
 				} else if (isRegroup) {
 					ally.showChatMessage('Regrouping', 1200);
-					ally.state='regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05;
-					try { this.addChatLog(ally.name, 'Regrouping', 'ally'); } catch(_){ }
+					ally.state = 'regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05;
+					try { this.addChatLog(ally.name, 'Regrouping', 'ally'); } catch (_) { }
 				} else if (isFollow) {
 					ally.showChatMessage('Following', 1200);
-					ally.state='regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05;
-					try { this.addChatLog(ally.name, 'Following', 'ally'); } catch(_){ }
+					ally.state = 'regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05;
+					try { this.addChatLog(ally.name, 'Following', 'ally'); } catch (_) { }
 				} else {
 					ally.showChatMessage('Roger', 900);
-					try { this.addChatLog(ally.name, 'Roger', 'ally'); } catch(_){ }
+					try { this.addChatLog(ally.name, 'Roger', 'ally'); } catch (_) { }
 				}
-			} catch(_){ }
+			} catch (_) { }
 		}
 	}
 
-	createChatOverlayUI(){
+	createChatOverlayUI() {
 		// delegasikan pembuatan chat UI ke modul eksternal
 		createChatOverlayUI(this);
 	}
 
-	updateChatAllyList(){
-		try { const impl = this.updateChatAllyList; const proto = Object.getPrototypeOf(this).updateChatAllyList; if (impl && impl !== proto) return impl.call(this); } catch(_){}
+	updateChatAllyList() {
+		try { const impl = this.updateChatAllyList; const proto = Object.getPrototypeOf(this).updateChatAllyList; if (impl && impl !== proto) return impl.call(this); } catch (_) { }
 	}
 
-	cycleSelectedAlly(){
-		try{
+	cycleSelectedAlly() {
+		try {
 			// clear previous selection
-			if (this._selectedAllyIndex >=0 && this.world.allies[this._selectedAllyIndex]) this.world.allies[this._selectedAllyIndex].setSelected(false);
-			if (!this.world.allies || this.world.allies.length===0) { this._selectedAllyIndex = -1; this.updateChatAllyList(); return; }
+			if (this._selectedAllyIndex >= 0 && this.world.allies[this._selectedAllyIndex]) this.world.allies[this._selectedAllyIndex].setSelected(false);
+			if (!this.world.allies || this.world.allies.length === 0) { this._selectedAllyIndex = -1; this.updateChatAllyList(); return; }
 			let next = this._selectedAllyIndex + 1;
 			if (next >= this.world.allies.length) next = -1; // wrap to all
 			this._selectedAllyIndex = next;
-			if (this._selectedAllyIndex >=0) this.world.allies[this._selectedAllyIndex].setSelected(true);
+			if (this._selectedAllyIndex >= 0) this.world.allies[this._selectedAllyIndex].setSelected(true);
 			// reflect in UI select
-			try { const sel = document.getElementById('chatTargetSel'); if (sel) sel.value = (this._selectedAllyIndex===-1?'all':this._selectedAllyIndex.toString()); } catch(_){}
+			try { const sel = document.getElementById('chatTargetSel'); if (sel) sel.value = (this._selectedAllyIndex === -1 ? 'all' : this._selectedAllyIndex.toString()); } catch (_) { }
 			this.updateChatAllyList();
-		} catch(_){}
+		} catch (_) { }
 	}
 
-	sendChatToAlly(msg, ally){
-		try{
+	sendChatToAlly(msg, ally) {
+		try {
 			// guard: jangan jalankan jika menu/pause aktif
 			const menuEl = (typeof document !== 'undefined') ? document.getElementById('menu') : null;
 			if ((menuEl && !menuEl.classList.contains('hidden')) || (typeof document !== 'undefined' && document.body.classList.contains('paused'))) return;
 			if (!ally) return;
-			try { this.addChatLog('You', msg, 'player'); } catch(_){ }
+			try { this.addChatLog('You', msg, 'player'); } catch (_) { }
 			ally.showChatMessage(msg, 1400);
 			const m = msg.toLowerCase();
 			if (m.includes('attack') || m.includes('serang')) { // find nearest enemy
-				let ne=null, nd=Infinity; for (const e of this.world.enemies){ const d=e.mesh.position.distanceTo(ally.mesh.position); if (d<nd){ nd=d; ne=e; } }
-				if (ne) { ally.state='engage'; ally.targetEnemy = ne; ally.nextThink = 0.04; ally.showChatMessage('On it!',900); try { this.addChatLog(ally.name, 'On it!', 'ally'); } catch(_){} }
-			} else if (m.includes('hold') || m.includes('tahan')) { ally.state='hold'; ally.waypoint = ally.mesh.position.clone(); ally.targetEnemy = null; try { this.addChatLog(ally.name, 'Holding', 'ally'); } catch(_){} }
-			else if (m.includes('regroup') || m.includes('balik')) { ally.state='regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05; try { this.addChatLog(ally.name, 'Regrouping', 'ally'); } catch(_){} }
-			else if (m.includes('follow') || m.includes('ikut')) { ally.state='regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05; try { this.addChatLog(ally.name, 'Following', 'ally'); } catch(_){} }
-		} catch(_){ }
+				let ne = null, nd = Infinity; for (const e of this.world.enemies) { const d = e.mesh.position.distanceTo(ally.mesh.position); if (d < nd) { nd = d; ne = e; } }
+				if (ne) { ally.state = 'engage'; ally.targetEnemy = ne; ally.nextThink = 0.04; ally.showChatMessage('On it!', 900); try { this.addChatLog(ally.name, 'On it!', 'ally'); } catch (_) { } }
+			} else if (m.includes('hold') || m.includes('tahan')) { ally.state = 'hold'; ally.waypoint = ally.mesh.position.clone(); ally.targetEnemy = null; try { this.addChatLog(ally.name, 'Holding', 'ally'); } catch (_) { } }
+			else if (m.includes('regroup') || m.includes('balik')) { ally.state = 'regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05; try { this.addChatLog(ally.name, 'Regrouping', 'ally'); } catch (_) { } }
+			else if (m.includes('follow') || m.includes('ikut')) { ally.state = 'regroup'; ally.waypoint = this.controls.getObject().position.clone(); ally.nextThink = 0.05; try { this.addChatLog(ally.name, 'Following', 'ally'); } catch (_) { } }
+		} catch (_) { }
 	}
 
 	// Adaptive culling: nonaktifkan grup instanced ketika kamera jauh untuk kurangi draw cost
@@ -2020,35 +2344,35 @@ export default class Game {
 			const platThresh = this._lowEnd ? 100 : 180;
 			const buildingThresh = this._lowEnd ? 160 : 300;
 			if (this._pillarInst) {
-				const center = new THREE.Vector3(0,1,0); // world center roughly
+				const center = new THREE.Vector3(0, 1, 0); // world center roughly
 				const d = camPos.distanceTo(center);
 				this._pillarInst.visible = (d <= pillarThresh);
 			}
 			if (this._platInst) {
-				const center = new THREE.Vector3(0,1,0);
+				const center = new THREE.Vector3(0, 1, 0);
 				const d = camPos.distanceTo(center);
 				this._platInst.visible = (d <= platThresh);
 			}
 			if (this._buildingInst) {
-				const center = new THREE.Vector3(0,1,0);
+				const center = new THREE.Vector3(0, 1, 0);
 				const d = camPos.distanceTo(center);
 				this._buildingInst.visible = (d <= buildingThresh);
 			}
-		} catch(_) {}
+		} catch (_) { }
 	}
 
 	// centralized score handler: update score and reduce enemy counters per 10 points
-	addScore(points){
-		try{
+	addScore(points) {
+		try {
 			const pts = Number(points) || 0;
 			this.world.score = (this.world.score || 0) + pts;
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
-		} catch(_) {}
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
+		} catch (_) { }
 	}
 
-	recordEnemyDeath(enemy){
+	recordEnemyDeath(enemy) {
 		// default implementation: increment per-wave kill counter and update HUD/wave state
-		try{
+		try {
 			// jika objek enemy diberikan, pastikan dihitung sekali saja
 			if (enemy && typeof enemy === 'object') {
 				if (enemy._deathCounted) return;
@@ -2057,17 +2381,17 @@ export default class Game {
 			if (typeof this._enemiesKilledThisWave !== 'number') this._enemiesKilledThisWave = 0;
 			this._enemiesKilledThisWave += 1;
 			// jika waveTotal diketahui dan sudah tercapai, masuk cooldown
-			try{
+			try {
 				if (typeof this.waveTotal === 'number' && this._enemiesKilledThisWave >= this.waveTotal) {
 					if (this.waveState !== 'cooldown') {
 						this.waveState = 'cooldown';
 						this.waveTimer = 6.0;
-						try { console.info('[Wave] all scheduled enemies killed, entering cooldown'); } catch(_){}
+						try { console.info('[Wave] all scheduled enemies killed, entering cooldown'); } catch (_) { }
 					}
 				}
-			} catch(_){ }
-			try { this.markHudDirty(); } catch(_) { try { this.updateHUD(); } catch(_){} }
-		} catch(_){}
+			} catch (_) { }
+			try { this.markHudDirty(); } catch (_) { try { this.updateHUD(); } catch (_) { } }
+		} catch (_) { }
 	}
 
 	// markHudDirty() disediakan oleh hudController; jangan duplikasi

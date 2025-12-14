@@ -1,0 +1,296 @@
+/* 2025 Game Styles - Overrides and New UI */
+
+/* Re-import basic resets if needed, or rely on existing structure */
+/* The body background is handled by theme.css or the 3D scene */
+
+#menu {
+	/* Ensure menu sits on top of 3D canvas but allows it to be seen if transparent */
+	background: rgba(0, 0, 0, 0.4);
+	/* Darker overlay but not solid */
+	backdrop-filter: blur(8px);
+}
+
+.menu-card {
+	width: min(90vw, 800px);
+	padding: 40px;
+	border-radius: 24px;
+
+	/* Glassmorphism 2025 */
+	background: linear-gradient(135deg, rgba(20, 20, 30, 0.7) 0%, rgba(10, 10, 15, 0.85) 100%);
+	backdrop-filter: var(--glass-blur);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow: var(--glass-shadow),
+		0 0 0 1px rgba(112, 0, 255, 0.1),
+		/* Inner purple hint */
+		0 0 60px rgba(0, 240, 255, 0.05);
+	/* Outer cyan glow */
+
+	color: var(--c-text-main);
+	text-align: center;
+	position: relative;
+	overflow: hidden;
+	transition: transform 0.4s var(--ease-elastic);
+}
+
+/* Neon Top Line */
+.menu-card::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 20%;
+	right: 20%;
+	height: 1px;
+	background: linear-gradient(90deg, transparent, var(--c-accent), transparent);
+	opacity: 0.8;
+	box-shadow: 0 0 15px var(--c-accent);
+}
+
+.menu-card h1 {
+	font-family: 'Rajdhani', sans-serif;
+	font-size: 64px;
+	font-weight: 700;
+	margin-bottom: 8px;
+	letter-spacing: 4px;
+	text-transform: uppercase;
+
+	/* Neon Text Gradient */
+	background: linear-gradient(180deg, #fff 0%, #a4b0c6 100%);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	filter: drop-shadow(0 0 20px rgba(0, 240, 255, 0.4));
+}
+
+.menu-card .subtitle {
+	color: var(--c-accent);
+	font-size: 14px;
+	letter-spacing: 2px;
+	font-weight: 600;
+	opacity: 0.9;
+	margin-bottom: 32px;
+	text-transform: uppercase;
+	text-shadow: 0 0 10px var(--c-accent-glow);
+}
+
+/* Tabs Redesign */
+.menu-tabs {
+	display: flex;
+	justify-content: center;
+	gap: 40px;
+	margin-bottom: 30px;
+	position: relative;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	padding-bottom: 0;
+}
+
+.menu-tabs button {
+	background: transparent;
+	border: none;
+	padding: 12px 0;
+	font-family: 'Rajdhani', sans-serif;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--c-text-muted);
+	cursor: pointer;
+	position: relative;
+	transition: all 0.3s ease;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+.menu-tabs button::after {
+	content: '';
+	position: absolute;
+	bottom: -1px;
+	left: 0;
+	width: 100%;
+	height: 3px;
+	background: var(--c-accent);
+	transform: scaleX(0);
+	transition: transform 0.3s var(--ease-out);
+	box-shadow: 0 -2px 10px var(--c-accent);
+}
+
+.menu-tabs button:hover {
+	color: #fff;
+	text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.menu-tabs button.active {
+	color: #fff;
+}
+
+.menu-tabs button.active::after {
+	transform: scaleX(1);
+}
+
+/* Primary Action Button (Mulai) */
+#playBtn {
+	background: linear-gradient(135deg, var(--c-accent) 0%, #00a8ff 100%);
+	color: #000;
+	border: none;
+	padding: 16px 64px;
+	font-size: 20px;
+	font-weight: 800;
+	border-radius: 8px;
+	text-transform: uppercase;
+	letter-spacing: 2px;
+	cursor: pointer;
+	box-shadow: 0 4px 20px rgba(0, 240, 255, 0.4);
+	transition: all 0.3s var(--ease-out);
+	position: relative;
+	overflow: hidden;
+}
+
+#playBtn:hover {
+	transform: translateY(-2px) scale(1.02);
+	box-shadow: 0 8px 30px rgba(0, 240, 255, 0.6);
+}
+
+#playBtn::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(rgba(255, 255, 255, 0.8), transparent);
+	opacity: 0;
+	transition: opacity 0.2s;
+}
+
+#playBtn:hover::before {
+	opacity: 0.2;
+}
+
+/* Settings Grid 2025 */
+.menu-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 16px 24px;
+	text-align: left;
+	max-height: 400px;
+	overflow-y: auto;
+	padding-right: 8px;
+}
+
+/* Custom Scrollbar for Settings */
+.menu-grid::-webkit-scrollbar {
+	width: 6px;
+}
+
+.menu-grid::-webkit-scrollbar-track {
+	background: rgba(0, 0, 0, 0.2);
+	border-radius: 3px;
+}
+
+.menu-grid::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.15);
+	border-radius: 3px;
+}
+
+.menu-grid label {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 14px;
+	color: var(--c-text-muted);
+	font-weight: 500;
+}
+
+.menu-grid input[type="range"],
+.menu-grid select {
+	background: rgba(0, 0, 0, 0.3);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 6px;
+	padding: 8px;
+	color: #fff;
+	font-family: inherit;
+	transition: border-color 0.2s;
+}
+
+.menu-grid input[type="range"]:hover,
+.menu-grid select:hover {
+	border-color: rgba(255, 255, 255, 0.3);
+}
+
+.menu-grid input[type="range"]:focus,
+.menu-grid select:focus {
+	outline: none;
+	border-color: var(--c-accent);
+	box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+}
+
+/* Details/Summary for Advanced */
+.advanced-settings summary {
+	cursor: pointer;
+	color: var(--c-accent);
+	font-size: 13px;
+	margin-bottom: 12px;
+	opacity: 0.8;
+	transition: opacity 0.2s;
+	user-select: none;
+}
+
+.advanced-settings summary:hover {
+	opacity: 1;
+}
+
+/* About Panel Text */
+#panelAbout p {
+	color: var(--c-text-muted);
+	line-height: 1.6;
+	margin-bottom: 16px;
+	font-size: 15px;
+}
+
+/* Buttons secondary (Reset/Menu) */
+button.secondary {
+	background: rgba(255, 255, 255, 0.05);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--c-text-muted);
+}
+
+button.secondary:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	border-color: #fff;
+}
+
+/* Animations */
+.panel {
+	display: none;
+	animation: fadeInSlide 0.4s var(--ease-out);
+}
+
+.panel.show {
+	display: block;
+}
+
+@keyframes fadeInSlide {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* Mobile Responsive */
+@media (max-width: 600px) {
+	.menu-card {
+		width: 100%;
+		height: 100%;
+		border-radius: 0;
+		padding: 24px;
+		background: rgba(10, 12, 18, 0.95);
+		/* More solid on mobile */
+	}
+
+	.menu-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.menu-card h1 {
+		font-size: 42px;
+	}
+}
